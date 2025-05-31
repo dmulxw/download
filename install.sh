@@ -397,18 +397,15 @@ echo "-----------------------------"
 NGINX_CONF_DIR="/etc/nginx"
 NGINX_SITES_AVAILABLE="${NGINX_CONF_DIR}/sites-available"
 NGINX_SITES_ENABLED="${NGINX_CONF_DIR}/sites-enabled"
+NGINX_CONF_D="${NGINX_CONF_DIR}/conf.d"
 
-if [[ "$IS_RHEL_FAMILY" == true ]]; then
-    if [[ ! -d "${NGINX_SITES_AVAILABLE}" ]]; then
-        mkdir -p "${NGINX_SITES_AVAILABLE}"
-    fi
-    if [[ ! -d "${NGINX_SITES_ENABLED}" ]]; then
-        mkdir -p "${NGINX_SITES_ENABLED}"
-        # 如果 nginx.conf 未包含 sites-enabled，需手动确认
-    fi
+# 保证 conf.d 目录存在
+if [[ ! -d "${NGINX_CONF_D}" ]]; then
+    mkdir -p "${NGINX_CONF_D}"
 fi
 
-CONF_FILE="${NGINX_SITES_AVAILABLE}/${DOMAIN}.conf"
+# 生成主站点配置到 conf.d 目录，兼容部分系统只加载 conf.d/*.conf 的情况
+CONF_FILE="${NGINX_CONF_D}/${DOMAIN}.conf"
 if [[ -f "${CONF_FILE}" ]]; then
     echo "检测到 ${CONF_FILE} 已存在，备份为 ${CONF_FILE}.bak"
     cp "${CONF_FILE}" "${CONF_FILE}.bak"
@@ -460,12 +457,7 @@ server {
 }
 EOF
 
-if [[ -L "${NGINX_SITES_ENABLED}/${DOMAIN}.conf" ]]; then
-    rm -f "${NGINX_SITES_ENABLED}/${DOMAIN}.conf"
-fi
-ln -s "${CONF_FILE}" "${NGINX_SITES_ENABLED}/${DOMAIN}.conf"
-
-echo "✅ Nginx 虚拟主机配置已写入：${CONF_FILE}，并已链接到 sites-enabled。"
+echo "✅ Nginx 虚拟主机配置已写入：${CONF_FILE}。"
 
 echo "正在测试 Nginx 配置语法..."
 nginx -t || { echo "⛔ Nginx 配置检测失败，请检查 ${CONF_FILE}。"; exit 1; }
