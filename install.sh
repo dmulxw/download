@@ -404,8 +404,15 @@ if [[ ! -d "${NGINX_CONF_D}" ]]; then
     mkdir -p "${NGINX_CONF_D}"
 fi
 
+# 在生成配置前输出调试信息
+echo "DEBUG: DOMAIN=${DOMAIN}, CONF_FILE=${NGINX_CONF_D}/${DOMAIN}.conf"
+
 # 生成主站点配置到 conf.d 目录，兼容部分系统只加载 conf.d/*.conf 的情况
 CONF_FILE="${NGINX_CONF_D}/${DOMAIN}.conf"
+if [[ -z "$DOMAIN" ]]; then
+    echo "⛔ 域名变量为空，无法生成 Nginx 配置文件，请检查前面流程。"
+    exit 1
+fi
 if [[ -f "${CONF_FILE}" ]]; then
     echo "检测到 ${CONF_FILE} 已存在，备份为 ${CONF_FILE}.bak"
     cp "${CONF_FILE}" "${CONF_FILE}.bak"
