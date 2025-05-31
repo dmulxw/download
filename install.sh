@@ -71,43 +71,60 @@ echo
 ###########################
 # 1. 交互式获取“域名”  #
 ###########################
-MAX_TRIES=3
-DOMAIN=""
-for ((i=1; i<=MAX_TRIES; i++)); do
-    read -rp "请输入要绑定的域名（第 ${i} 次，共 ${MAX_TRIES} 次机会）： " input_domain
-    if [[ -n "$input_domain" && "$input_domain" =~ ^[A-Za-z0-9.-]+$ ]]; then
-        DOMAIN="$input_domain"
-        break
-    else
-        echo "❌ 域名格式不合法，请重新输入（只能包含字母/数字/点/横杠）。"
-    fi
-    if [[ $i -eq $MAX_TRIES ]]; then
-        echo "⛔ 3 次输入均不合法，安装程序退出。"
-        exit 1
-    fi
-done
-echo "✅ 已确认域名：${DOMAIN}"
-echo
+get_domain() {
+    MAX_TRIES=3
+    DOMAIN=""
+    exec 3<&0  # 备份标准输入
+    exec < /dev/tty
+    for ((i=1; i<=MAX_TRIES; i++)); do
+        read -rp "请输入要绑定的域名（第 ${i} 次，共 ${MAX_TRIES} 次机会）： " input_domain
+        if [[ -n "$input_domain" && "$input_domain" =~ ^[A-Za-z0-9.-]+$ ]]; then
+            DOMAIN="$input_domain"
+            break
+        else
+            echo "❌ 域名格式不合法，请重新输入（只能包含字母/数字/点/横杠）。"
+        fi
+        if [[ $i -eq $MAX_TRIES ]]; then
+            echo "⛔ 3 次输入均不合法，安装程序退出。"
+            exec 0<&3  # 恢复标准输入
+            exit 1
+        fi
+    done
+    exec 0<&3  # 恢复标准输入
+    echo "✅ 已确认域名：${DOMAIN}"
+    echo
+}
 
 ###############################
 # 2. 交互式获取“Email”地址  #
 ###############################
-EMAIL=""
-for ((i=1; i<=MAX_TRIES; i++)); do
-    read -rp "请输入用于申请 SSL 证书的 Email（第 ${i} 次，共 ${MAX_TRIES} 次机会）： " input_email
-    if [[ -n "$input_email" && "$input_email" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
-        EMAIL="$input_email"
-        break
-    else
-        echo "❌ Email 格式不合法，请重新输入。"
-    fi
-    if [[ $i -eq $MAX_TRIES ]]; then
-        echo "⛔ 3 次输入均不合法，安装程序退出。"
-        exit 1
-    fi
-done
-echo "✅ 已确认 Email：${EMAIL}"
-echo
+get_email() {
+    MAX_TRIES=3
+    EMAIL=""
+    exec 3<&0
+    exec < /dev/tty
+    for ((i=1; i<=MAX_TRIES; i++)); do
+        read -rp "请输入用于申请 SSL 证书的 Email（第 ${i} 次，共 ${MAX_TRIES} 次机会）： " input_email
+        if [[ -n "$input_email" && "$input_email" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
+            EMAIL="$input_email"
+            break
+        else
+            echo "❌ Email 格式不合法，请重新输入。"
+        fi
+        if [[ $i -eq $MAX_TRIES ]]; then
+            echo "⛔ 3 次输入均不合法，安装程序退出。"
+            exec 0<&3
+            exit 1
+        fi
+    done
+    exec 0<&3
+    echo "✅ 已确认 Email：${EMAIL}"
+    echo
+}
+
+# 调用函数
+get_domain
+get_email
 
 ##############################################
 # 3. 检查是否为 root，并安装所需依赖（分发） #
@@ -385,3 +402,26 @@ echo
 ###################################################
 echo "-----------------------------"
 echo "  配置 acme.sh 证书续期 Crontab"
+echo "-----------------------------"
+
+CRON_JOB="0 1 1 * * root /root/.acme.sh/acme.sh --cron --home /root/.acme.sh > /dev/null 2>&1"
+
+# 检查 crontab 是否已存在相同任务
+if ! crontab -l | grep -qF "${CRON_JOB}"; then
+    (crontab -l 2>/dev/null; echo "${CRON_JOB}") | crontab -
+    echo "✅ 已添加 acme.sh 证书续期的 Crontab 任务。"
+else
+    echo "ℹ️ 检测到 Crontab 已存在相同任务，跳过添加。"
+fi
+
+echo "------------------------------------------------------"
+echo " 安装完成！请手动检查以下内容："
+echo " 1. 域名解析是否已正确指向本服务器"
+echo " 2. 防火墙设置（确保 80/443 端口已放行）"
+echo " 3. Nginx 日志文件（如有错误，请及时修复）"
+echo " 4. SSL 证书有效性（可通过浏览器或在线工具检查）"
+echo "------------------------------------------------------"
+echo
+
+# 结束
+exit 0
