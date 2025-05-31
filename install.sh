@@ -231,6 +231,54 @@ fi
 echo "✅ 依赖安装与基础服务启动完成。"
 echo
 
+#############################################
+# 检查并放行 80/443 端口（防火墙自动处理）  #
+#############################################
+echo "-----------------------------"
+echo "  检查并放行 80/443 端口"
+echo "-----------------------------"
+
+open_ports() {
+    # 检查并放行 80/443 端口，支持 ufw、firewalld、iptables
+    if command -v ufw &>/dev/null; then
+        if ufw status | grep -qw active; then
+            echo "检测到 ufw，正在放行 80/443 端口..."
+            ufw allow 80/tcp || true
+            ufw allow 443/tcp || true
+            ufw reload || true
+        fi
+    fi
+
+    if command -v firewall-cmd &>/dev/null; then
+        if systemctl is-active firewalld &>/dev/null; then
+            echo "检测到 firewalld，正在放行 80/443 端口..."
+            firewall-cmd --permanent --add-service=http || true
+            firewall-cmd --permanent --add-service=https || true
+            firewall-cmd --reload || true
+        fi
+    fi
+
+    # 仅在未检测到 ufw/firewalld 时尝试 iptables
+    if ! command -v ufw &>/dev/null && ! command -v firewall-cmd &>/dev/null; then
+        if command -v iptables &>/dev/null; then
+            echo "检测到 iptables，正在放行 80/443 端口..."
+            iptables -C INPUT -p tcp --dport 80 -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport 80 -j ACCEPT
+            iptables -C INPUT -p tcp --dport 443 -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport 443 -j ACCEPT
+            # 可选：保存规则
+            if command -v netfilter-persistent &>/dev/null; then
+                netfilter-persistent save
+            elif command -v service &>/dev/null && service iptables save &>/dev/null; then
+                service iptables save
+            fi
+        fi
+    fi
+}
+
+open_ports
+
+echo "✅ 已尝试自动放行 80/443 端口，请手动确认防火墙规则。"
+echo
+
 ####################################
 # 4. 下载并解压 最新 web.zip (GitHub release) #
 ####################################
@@ -354,6 +402,13 @@ server {
     listen [::]:80;
     server_name ${DOMAIN} www.${DOMAIN};
 
+    # ACME challenge
+    location ^~ /.well-known/acme-challenge/ {
+        root ${WEB_ROOT};
+        default_type "text/plain";
+        try_files \$uri =404;
+    }
+
     return 301 https://\$host\$request_uri;
 }
 
@@ -392,7 +447,11 @@ echo "正在测试 Nginx 配置语法..."
 nginx -t || { echo "⛔ Nginx 配置检测失败，请检查 ${CONF_FILE}。"; exit 1; }
 
 echo "正在重载 Nginx 服务..."
-systemctl reload nginx
+if systemctl is-active nginx &>/dev/null; then
+    systemctl reload nginx
+else
+    systemctl start nginx
+fi
 
 echo "✅ Nginx 已启动并加载新站点：${DOMAIN}"
 echo
