@@ -25,7 +25,7 @@
 #   sudo /root/install.sh
 #
 ### 一键安装nginx网站，自动加入SSL证书。只要复制后在linux系统里，右键粘贴，执行以下命令行就可以了
-```
-curl -Ls https://raw.githubusercontent.com/dmulxw/download/master/install.sh | sudo bash
 
-```
+> ```sh
+> curl -Ls https://raw.githubusercontent.com/dmulxw/download/master/install.sh | sudo bash
+> ``
