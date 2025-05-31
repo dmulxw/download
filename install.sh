@@ -346,12 +346,35 @@ fi
 
 export PATH="/root/.acme.sh:${PATH}"
 
+# --- 新增：webroot 路径和 Nginx 配置一致性检测与手动测试 ---
+echo "-----------------------------"
+echo "  检查 .well-known/acme-challenge 路径可访问性"
+echo "-----------------------------"
+TEST_TOKEN="acme_test_$(date +%s)"
+TEST_FILE="${WEB_ROOT}/.well-known/acme-challenge/${TEST_TOKEN}"
+mkdir -p "${WEB_ROOT}/.well-known/acme-challenge"
+echo "test_ok" > "${TEST_FILE}"
+
+TEST_URL="http://${DOMAIN}/.well-known/acme-challenge/${TEST_TOKEN}"
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${TEST_URL}")
+
+if [[ "${HTTP_CODE}" != "200" ]]; then
+    echo "⛔ 检测失败：无法通过 HTTP 访问 ${TEST_URL}，请检查 Nginx 配置、webroot 路径和防火墙。"
+    echo "建议手动访问该 URL，确认能看到 test_ok 内容。"
+    rm -f "${TEST_FILE}"
+    exit 1
+else
+    echo "✅ .well-known/acme-challenge 路径可正常访问。"
+    rm -f "${TEST_FILE}"
+fi
+echo
+
 echo "开始申请证书（域名：${DOMAIN}，Email：${EMAIL}）……"
 ~/.acme.sh/acme.sh --issue --webroot "${WEB_ROOT}" -d "${DOMAIN}" \
     --keylength ec-256 \
     --accountemail "${EMAIL}" \
     --debug \
-    || { echo "⛔ 证书申请失败：请检查域名解析是否已生效、80 端口是否对外开放。"; exit 1; }
+    || { echo "⛔ 证书申请失败：请检查域名解析是否已生效、80 端口是否对外开放、Nginx 配置与 webroot 路径是否一致。"; exit 1; }
 
 echo "正在将证书安装到目录：${SSL_DIR} ..."
 ~/.acme.sh/acme.sh --install-cert -d "${DOMAIN}" \
