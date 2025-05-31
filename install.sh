@@ -350,6 +350,7 @@ echo "开始申请证书（域名：${DOMAIN}，Email：${EMAIL}）……"
 ~/.acme.sh/acme.sh --issue --webroot "${WEB_ROOT}" -d "${DOMAIN}" \
     --keylength ec-256 \
     --accountemail "${EMAIL}" \
+    --debug \
     || { echo "⛔ 证书申请失败：请检查域名解析是否已生效、80 端口是否对外开放。"; exit 1; }
 
 echo "正在将证书安装到目录：${SSL_DIR} ..."
