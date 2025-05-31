@@ -405,13 +405,14 @@ echo "  配置 acme.sh 证书续期 Crontab"
 echo "-----------------------------"
 
 CRON_JOB="0 1 1 * * root /root/.acme.sh/acme.sh --cron --home /root/.acme.sh > /dev/null 2>&1"
+CRON_FILE="/etc/crontab"
 
-# 检查 crontab 是否已存在相同任务
-if ! crontab -l | grep -qF "${CRON_JOB}"; then
-    (crontab -l 2>/dev/null; echo "${CRON_JOB}") | crontab -
-    echo "✅ 已添加 acme.sh 证书续期的 Crontab 任务。"
+# 检查 /etc/crontab 是否已存在 acme.sh 续期任务
+if ! grep -q "/root/.acme.sh/acme.sh --cron" "$CRON_FILE"; then
+    echo "$CRON_JOB" >> "$CRON_FILE"
+    echo "✅ 已添加 acme.sh 证书续期的系统 Crontab 任务。"
 else
-    echo "ℹ️ 检测到 Crontab 已存在相同任务，跳过添加。"
+    echo "ℹ️ 检测到系统 Crontab 已存在 acme.sh 续期任务，跳过添加。"
 fi
 
 echo "------------------------------------------------------"
