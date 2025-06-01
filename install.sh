@@ -395,6 +395,13 @@ server {
     }
 }
 EOF
+    if [[ $? -ne 0 ]]; then
+        echo "⛔ 无法写入 Nginx 配置文件 ${NGINX_CONF}，请检查 /etc/nginx/conf.d/ 目录权限和磁盘空间。"
+        ls -ld /etc/nginx/conf.d
+        id
+        df -h /etc/nginx/conf.d
+        exit 1
+    fi
     nginx -t && systemctl reload nginx
     echo "✅ 已自动生成并重载 Nginx 配置：${NGINX_CONF}"
 fi
