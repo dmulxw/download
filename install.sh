@@ -354,10 +354,24 @@ echo "-----------------------------"
 ACME_DIR="${WEB_ROOT}/.well-known/acme-challenge"
 mkdir -p "${ACME_DIR}"
 
-# 检查写权限并输出调试信息
 echo "DEBUG: ACME_DIR=${ACME_DIR}"
 ls -ld "${ACME_DIR}"
 id
+
+# 检查 Nginx 配置文件是否存在
+NGINX_CONF="/etc/nginx/conf.d/${DOMAIN}.conf"
+if [[ ! -f "${NGINX_CONF}" ]]; then
+    echo "⛔ Nginx 配置文件 ${NGINX_CONF} 不存在，web 目录检测无法继续。请先生成并 reload Nginx 配置。"
+    exit 1
+fi
+
+# 检查 Nginx 是否已 reload 并监听 80 端口
+if ! ss -ltnp | grep -q ':80'; then
+    echo "⛔ Nginx 未监听 80 端口，请检查配置并确保 Nginx 已 reload。"
+    nginx -t
+    systemctl reload nginx
+    exit 1
+fi
 
 if ! touch "${ACME_DIR}/.permtest" 2>/dev/null; then
     echo "⛔ 无法写入 ${ACME_DIR}，请检查目录权限，确保当前用户（$(id -un)）有写权限。"
@@ -371,7 +385,6 @@ TEST_TOKEN="acme_test_$(date +%s)"
 TEST_FILE="${ACME_DIR}/${TEST_TOKEN}"
 echo "test_ok" > "${TEST_FILE}"
 
-# 检查文件是否实际写入成功
 if [[ ! -f "${TEST_FILE}" ]]; then
     echo "⛔ 测试文件 ${TEST_FILE} 未能成功创建，请检查目录权限和磁盘空间。"
     exit 1
@@ -380,7 +393,7 @@ fi
 ls -l "${TEST_FILE}"
 
 TEST_URL="http://${DOMAIN}/.well-known/acme-challenge/${TEST_TOKEN}"
-HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${TEST_URL}")
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${TEST_URL}"
 
 if [[ "${HTTP_CODE}" != "200" ]]; then
     echo "⛔ 检测失败：无法通过 HTTP 访问 ${TEST_URL}，请检查 Nginx 配置、webroot 路径和防火墙。"
