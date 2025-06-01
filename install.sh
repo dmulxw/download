@@ -70,7 +70,7 @@ get_domain() {
     exec 3<&0
     exec < /dev/tty
     for ((i=1; i<=MAX_TRIES; i++)); do
-        printf "${CYAN}请输入要绑定的域名 (Enter the domain name) – 第 ${i} 次 / attempt ${i} of ${MAX_TRIES}:${RESET} "
+        printf "${CYAN}请输入要绑定的域名 (Enter the domain name) :${RESET} "
         read input_domain
         if [[ -n "$input_domain" && "$input_domain" =~ ^[A-Za-z0-9.-]+$ ]]; then
             DOMAIN="$input_domain"
@@ -98,7 +98,7 @@ get_email() {
     exec 3<&0
     exec < /dev/tty
     for ((i=1; i<=MAX_TRIES; i++)); do
-        printf "${CYAN}请输入用于申请 SSL 证书的 Email (Enter email for SSL certificate) – 第 ${i} 次 / attempt ${i} of ${MAX_TRIES}:${RESET} "
+        printf "${CYAN}请输入用于申请 SSL 证书的 Email (Enter email for SSL certificate) :${RESET} "
         read input_email
         if [[ -n "$input_email" && "$input_email" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
             EMAIL="$input_email"
