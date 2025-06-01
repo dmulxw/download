@@ -292,4 +292,201 @@ WEB_ROOT="/var/www/${DOMAIN}/html"
 mkdir -p "${WEB_ROOT}"
 
 TMP_ZIP="/tmp/web_${DOMAIN}.zip"
-echo "正在从 ${ZIP_URL} 下载最新 web.zip 到 ${TMP_ZIP} ...
+echo "正在从 ${ZIP_URL} 下载最新 web.zip 到 ${TMP_ZIP} ..."
+curl -fsSL "${ZIP_URL}" -o "${TMP_ZIP}" || {
+    echo "⛔ 下载失败：请检查网络或 GitHub Releases URL 是否可访问。"
+    exit 1
+}
+
+echo "正在解压到 ${WEB_ROOT} ..."
+unzip -o "${TMP_ZIP}" -d "/var/www/${DOMAIN}/" \
+    || { echo "⛔ 解压 web.zip 失败！"; exit 1; }
+rm -f "${TMP_ZIP}"
+
+# 设置网站根目录权限
+if $IS_DEBIAN_FAMILY; then
+    web_user="www-data"
+    web_group="www-data"
+else
+    web_user="nginx"
+    web_group="nginx"
+fi
+if ! id "${web_user}" &>/dev/null; then
+    web_user="www-data"
+    web_group="www-data"
+fi
+
+chown -R "${web_user}:${web_group}" "/var/www/${DOMAIN}/"
+find "/var/www/${DOMAIN}/" -type d -exec chmod 755 {} \;
+find "/var/www/${DOMAIN}/" -type f -exec chmod 644 {} \;
+
+echo "✅ web 程序已部署到 ${WEB_ROOT}，并已设置文件权限（${web_user}:${web_group}）。"
+echo
+
+##############################################
+# 6. 安装并配置 acme.sh 申请 SSL 证书      #
+##############################################
+echo "######################################################"
+echo "  安装并配置 acme.sh 申请 SSL 证书"
+echo "######################################################"
+
+ACME_SH_DIR="/www/letsencrypt/acme.sh"
+if [ -d "$ACME_SH_DIR" ]; then
+    echo "ℹ️ 检测到 acme.sh 已安装，将跳过安装步骤。"
+else
+    echo "正在安装 acme.sh ..."
+    curl https://get.acme.sh | sh
+    echo "✅ acme.sh 安装完成。"
+fi
+
+# shellcheck disable=SC1091
+source ~/.bashrc
+
+# 申请 SSL 证书
+echo "正在申请 SSL 证书，请稍候 ..."
+if ! acme.sh --issue -d "${DOMAIN}" --webroot "/var/www/${DOMAIN}/html" --staging --force; then
+    echo "⛔ SSL 证书申请失败，请检查域名解析与网络连接。"
+    exit 1
+fi
+
+echo "✅ SSL 证书申请成功。"
+
+# 安装证书到 Nginx
+echo "正在安装证书到 Nginx 配置 ..."
+if ! acme.sh --install-cert -d "${DOMAIN}" \
+    --key-file "/etc/nginx/ssl/${DOMAIN}.key" \
+    --fullchain-file "/etc/nginx/ssl/${DOMAIN}.cer" \
+    --reloadcmd "systemctl reload nginx" \
+    --force; then
+    echo "⛔ 安装证书失败！"
+    exit 1
+fi
+
+echo "✅ 证书安装完成。"
+echo
+
+##############################################
+# 7. 生成 Nginx 正式配置并启用站点        #
+##############################################
+echo "######################################################"
+echo "  生成 Nginx 正式配置并启用站点"
+echo "######################################################"
+
+NGINX_CONF="/etc/nginx/sites-available/${DOMAIN}.conf"
+if [ -f "$NGINX_CONF" ]; then
+    echo "ℹ️ 检测到 Nginx 配置文件已存在，将跳过此步骤。"
+else
+    echo "正在生成 Nginx 配置文件 ..."
+    cat > "$NGINX_CONF" <<EOF
+server {
+    listen 80;
+    server_name ${DOMAIN};
+
+    # 强制 HTTPS 重定向
+    return 301 https://\$host\$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name ${DOMAIN};
+
+    ssl_certificate     /etc/nginx/ssl/${DOMAIN}.cer;
+    ssl_certificate_key /etc/nginx/ssl/${DOMAIN}.key;
+
+    # 其他 SSL 配置
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+
+    root /var/www/${DOMAIN}/html;
+    index index.html index.htm;
+
+    location / {
+        try_files \$uri \$uri/ =404;
+    }
+
+    # 其他自定义配置
+}
+EOF
+    echo "✅ Nginx 配置文件生成完毕：$NGINX_CONF"
+fi
+
+# 启用站点配置
+if [ -L "/etc/nginx/sites-enabled/${DOMAIN}.conf" ]; then
+    echo "ℹ️ 站点配置已启用，无需重复操作。"
+else
+    echo "正在启用站点配置 ..."
+    ln -s "$NGINX_CONF" "/etc/nginx/sites-enabled/${DOMAIN}.conf"
+    echo "✅ 站点配置已启用。"
+fi
+
+# 测试 Nginx 配置并重载服务
+echo "正在测试 Nginx 配置 ..."
+if nginx -t; then
+    echo "Nginx 配置测试通过，正在重载服务 ..."
+    systemctl reload nginx
+    echo "✅ Nginx 服务已重载。"
+else
+    echo "⛔ Nginx 配置测试失败，请检查配置文件语法。"
+    exit 1
+fi
+
+echo
+
+##############################################
+# 8. 安装并配置 cron 任务自动续期证书     #
+##############################################
+echo "######################################################"
+echo "  安装并配置 cron 任务自动续期证书"
+echo "######################################################"
+
+CRON_JOB="0 1 * * * /www/letsencrypt/acme.sh --cron --home /www/letsencrypt > /dev/null 2>&1"
+
+# 检查并添加 Crontab 任务
+if crontab -l | grep -q "${CRON_JOB}"; then
+    echo "ℹ️ Crontab 任务已存在，无需重复添加。"
+else
+    echo "正在添加 Crontab 任务 ..."
+    (crontab -l 2>/dev/null; echo "${CRON_JOB}") | crontab -
+    echo "✅ Crontab 任务添加成功：每月 1 日 01:00 自动续期证书"
+fi
+
+echo
+
+##############################################
+# 9. 提示用户检查防火墙                   #
+##############################################
+echo "######################################################"
+echo "  安装完成！请检查防火墙设置"
+echo "######################################################"
+
+if command -v ufw &>/dev/null; then
+    if ufw status | grep -qw active; then
+        echo "✅ UFW 防火墙已启用，80/443 端口已放行。"
+    else
+        echo "⚠️ UFW 防火墙已安装但未启用，请手动启用或检查设置。"
+    fi
+fi
+
+if command -v firewall-cmd &>/dev/null; then
+    if systemctl is-active firewalld &>/dev/null; then
+        echo "✅ firewalld 防火墙已启用，80/443 端口已放行。"
+    else
+        echo "⚠️ firewalld 防火墙已安装但未启用，请手动启用或检查设置。"
+    fi
+fi
+
+if command -v iptables &>/dev/null; then
+    iptables -L -n | grep -E "80|443" &>/dev/null
+    if [ "$?" -eq 0 ]; then
+        echo "✅ iptables 已放行 80/443 端口。"
+    else
+        echo "⚠️ iptables 未放行 80/443 端口，请手动检查设置。"
+    fi
+fi
+
+echo
+echo "🎉 所有步骤已成功完成！请访问您的域名检查站点是否正常。"
+echo "📅 请记得定期检查 SSL 证书有效期，确保自动续期任务正常运行。"
+echo "如需帮助，请查阅相关文档或联系支持。"
+echo "######################################################"
