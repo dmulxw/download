@@ -2,7 +2,8 @@
 # -*- coding: utf-8 -*-
 #
 # install.sh - 兼容 Ubuntu/Debian、CentOS/AlmaLinux/RHEL 等的自动安装脚本
-#              扩展：如果已有相同证书且距今不足 3 天，先使用现有证书；最后提示是否重新生成
+#              扩展：直接将网站内容解压到 /var/www/${DOMAIN}/，Nginx 根目录指向该路径
+#              若已有相同证书且距今不足 3 天，先使用现有证书；末尾提示是否重新生成
 #
 set -e
 
@@ -241,7 +242,8 @@ echo "  下载并部署最新版本 web.zip"
 echo "######################################################"
 
 ZIP_URL="https://github.com/dmulxw/download/releases/latest/download/web.zip"
-WEB_ROOT="/var/www/${DOMAIN}/html"
+# 直接将内容解压到 /var/www/${DOMAIN}/
+WEB_ROOT="/var/www/${DOMAIN}"
 mkdir -p "${WEB_ROOT}"
 
 TMP_ZIP="/tmp/web_${DOMAIN}.zip"
@@ -252,7 +254,7 @@ curl -fsSL "${ZIP_URL}" -o "${TMP_ZIP}" || {
 }
 
 echo "正在解压到 ${WEB_ROOT} ..."
-unzip -o "${TMP_ZIP}" -d "/var/www/${DOMAIN}/" \
+unzip -o "${TMP_ZIP}" -d "${WEB_ROOT}" \
     || { echo "⛔ 解压 web.zip 失败！"; exit 1; }
 rm -f "${TMP_ZIP}"
 
@@ -268,9 +270,9 @@ if ! id "${web_user}" &>/dev/null; then
     web_group="www-data"
 fi
 
-chown -R "${web_user}:${web_group}" "/var/www/${DOMAIN}/"
-find "/var/www/${DOMAIN}/" -type d -exec chmod 755 {} \;
-find "/var/www/${DOMAIN}/" -type f -exec chmod 644 {} \;
+chown -R "${web_user}:${web_group}" "${WEB_ROOT}"
+find "${WEB_ROOT}" -type d -exec chmod 755 {} \;
+find "${WEB_ROOT}" -type f -exec chmod 644 {} \;
 
 echo "✅ web 程序已部署到 ${WEB_ROOT}，并已设置文件权限（${web_user}:${web_group}）。"
 echo
@@ -419,7 +421,7 @@ fi
 
 ##############################################
 # 7. 生成 Nginx 正式配置并启用站点         #
-#    —— 始终覆盖旧配置，确保路径正确          #
+#    —— 采用 /var/www/${DOMAIN} 作为 root    #
 ##############################################
 echo "######################################################"
 echo "  生成 Nginx 正式配置并启用站点"
@@ -430,7 +432,7 @@ NGINX_CONF_ENABLED="/etc/nginx/sites-enabled"
 mkdir -p "${NGINX_CONF_AVAILABLE}" "${NGINX_CONF_ENABLED}"
 NGINX_CONF_FILE="${NGINX_CONF_AVAILABLE}/${DOMAIN}.conf"
 
-# 始终覆盖旧配置，避免使用旧的错路径
+# 始终覆盖旧配置，确保路径指向 /var/www/${DOMAIN}
 echo "正在写入 Nginx 配置文件：${NGINX_CONF_FILE} ..."
 cat > "${NGINX_CONF_FILE}" <<EOF
 server {
@@ -453,7 +455,7 @@ server {
     ssl_ciphers         HIGH:!aNULL:!MD5;
     ssl_prefer_server_ciphers on;
 
-    root /var/www/${DOMAIN}/html;
+    root /var/www/${DOMAIN};
     index index.html index.htm;
 
     location / {
@@ -461,7 +463,7 @@ server {
     }
 
     location ^~ /.well-known/acme-challenge/ {
-        root /var/www/${DOMAIN}/html;
+        root /var/www/${DOMAIN};
         default_type "text/plain";
         try_files \$uri =404;
     }
@@ -514,29 +516,37 @@ if $USE_EXISTING_CERT; then
     echo "  检测到已有证书距今不足 3 天"
     echo "  旧证书生成日期：$(date -d @"$CERT_MTIME" +'%Y-%m-%d')，已过去 ${CERT_AGE_DAYS} 天。"
     echo "  若要强制重新生成，请在 10 秒内输入 Y，或等待超时跳过。"
-    read -t 10 -rn1 yn
-    echo
-    if [[ "$yn" =~ [Yy] ]]; then
-        echo "✅ 用户选择强制重新生成证书，开始执行……"
-        echo "######################################################"
-        echo "  再次申请 Let’s Encrypt 证书（域名：${DOMAIN}，Email：${EMAIL}）……"
-        "$ACME_BIN" --issue --webroot "${WEB_ROOT}" -d "${DOMAIN}" -d "www.${DOMAIN}" \
-            --keylength ec-256 \
-            --accountemail "${EMAIL}" \
-            || { echo "⛔ 证书申请失败：请检查域名解析是否已生效、80 端口是否对外开放、Nginx challenge 配置是否生效。"; exit 1; }
+    # 切换到 /dev/tty 读取，避免管道导致直接跳过
+    exec 3<&0
+    exec < /dev/tty
+    if read -t 10 -rn1 yn; then
+        echo
+        if [[ "$yn" =~ [Yy] ]]; then
+            echo "✅ 用户选择强制重新生成证书，开始执行……"
+            echo "######################################################"
+            echo "  再次申请 Let’s Encrypt 证书（域名：${DOMAIN}，Email：${EMAIL}）……"
+            "$ACME_BIN" --issue --webroot "${WEB_ROOT}" -d "${DOMAIN}" -d "www.${DOMAIN}" \
+                --keylength ec-256 \
+                --accountemail "${EMAIL}" \
+                || { echo "⛔ 证书申请失败：请检查域名解析是否已生效、80 端口是否对外开放、Nginx challenge 配置是否生效。"; exit 1; }
 
-        echo "正在将新证书安装到 ${SSL_DIR} ……"
-        "$ACME_BIN" --install-cert -d "${DOMAIN}" \
-            --key-file   "${SSL_DIR}/${DOMAIN}.key" \
-            --fullchain-file "${SSL_DIR}/${DOMAIN}.cer" \
-            --reloadcmd  "systemctl reload nginx" \
-            || { echo "⛔ 新证书安装失败！"; exit 1; }
+            echo "正在将新证书安装到 ${SSL_DIR} ……"
+            "$ACME_BIN" --install-cert -d "${DOMAIN}" \
+                --key-file   "${SSL_DIR}/${DOMAIN}.key" \
+                --fullchain-file "${SSL_DIR}/${DOMAIN}.cer" \
+                --reloadcmd  "systemctl reload nginx" \
+                || { echo "⛔ 新证书安装失败！"; exit 1; }
 
-        echo "✅ 新 Let’s Encrypt 证书已生成并部署到 ${SSL_DIR}。"
-        echo "✅ 已完成强制重新生成并自动重载 Nginx。"
+            echo "✅ 新 Let’s Encrypt 证书已生成并部署到 ${SSL_DIR}。"
+            echo "✅ 已完成强制重新生成并自动重载 Nginx。"
+        else
+            echo "ℹ️ 跳过证书重新生成，保留现有证书。"
+        fi
     else
-        echo "ℹ️ 跳过证书重新生成，保留现有证书。"
+        echo
+        echo "ℹ️ 未在 10 秒内输入，跳过证书重新生成。"
     fi
+    exec 0<&3
 fi
 
 echo
