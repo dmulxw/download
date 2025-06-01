@@ -373,7 +373,6 @@ echo "开始申请证书（域名：${DOMAIN}，Email：${EMAIL}）……"
 ~/.acme.sh/acme.sh --issue --webroot "${WEB_ROOT}" -d "${DOMAIN}" \
     --keylength ec-256 \
     --accountemail "${EMAIL}" \
-    --debug \
     || { echo "⛔ 证书申请失败：请检查域名解析是否已生效、80 端口是否对外开放、Nginx 配置与 webroot 路径是否一致。"; exit 1; }
 
 echo "正在将证书安装到目录：${SSL_DIR} ..."
@@ -405,17 +404,15 @@ if [[ ! -d "${NGINX_CONF_D}" ]]; then
 fi
 
 # 在生成配置前输出调试信息
-echo "DEBUG: DOMAIN=${DOMAIN}, CONF_FILE=${NGINX_CONF_D}/${DOMAIN}.conf"
+echo "DEBUG: DOMAIN=${DOMAIN}"
+echo "DEBUG: CONF_FILE=${CONF_FILE}"
 
-# 生成主站点配置到 conf.d 目录，兼容部分系统只加载 conf.d/*.conf 的情况
-CONF_FILE="${NGINX_CONF_D}/${DOMAIN}.conf"
-if [[ -z "$DOMAIN" ]]; then
-    echo "⛔ 域名变量为空，无法生成 Nginx 配置文件，请检查前面流程。"
+# 检查是否有写入权限
+if ! touch "${CONF_FILE}" 2>/dev/null; then
+    echo "⛔ 无法写入 ${CONF_FILE}，请确认脚本以 root 权限运行，且 /etc/nginx/conf.d/ 目录存在且可写。"
+    ls -ld /etc/nginx/conf.d
+    id
     exit 1
-fi
-if [[ -f "${CONF_FILE}" ]]; then
-    echo "检测到 ${CONF_FILE} 已存在，备份为 ${CONF_FILE}.bak"
-    cp "${CONF_FILE}" "${CONF_FILE}.bak"
 fi
 
 cat > "${CONF_FILE}" <<EOF
