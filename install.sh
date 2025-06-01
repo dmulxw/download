@@ -350,9 +350,19 @@ export PATH="/root/.acme.sh:${PATH}"
 echo "-----------------------------"
 echo "  检查 .well-known/acme-challenge 路径可访问性"
 echo "-----------------------------"
+# 检查 .well-known/acme-challenge 路径可访问性前，确保有写权限
+ACME_DIR="${WEB_ROOT}/.well-known/acme-challenge"
+mkdir -p "${ACME_DIR}"
+if ! touch "${ACME_DIR}/.permtest" 2>/dev/null; then
+    echo "⛔ 无法写入 ${ACME_DIR}，请检查目录权限，确保当前用户（$(id -un)）有写权限。"
+    ls -ld "${ACME_DIR}"
+    id
+    exit 1
+fi
+rm -f "${ACME_DIR}/.permtest"
+
 TEST_TOKEN="acme_test_$(date +%s)"
-TEST_FILE="${WEB_ROOT}/.well-known/acme-challenge/${TEST_TOKEN}"
-mkdir -p "${WEB_ROOT}/.well-known/acme-challenge"
+TEST_FILE="${ACME_DIR}/${TEST_TOKEN}"
 echo "test_ok" > "${TEST_FILE}"
 
 TEST_URL="http://${DOMAIN}/.well-known/acme-challenge/${TEST_TOKEN}"
@@ -389,7 +399,7 @@ echo
 ##########################################################
 # 6. 生成 Nginx 配置并启用站点（80→443 重定向 + HTTPS） #
 ##########################################################
-# 设置 NGINX_CONF_D 变量（确保为绝对路径，且在所有相关代码前设置）
+# 设置 NGINX_CONF_DIR 和 NGINX_CONF_D 变量（确保为绝对路径，且在所有相关代码前设置）
 NGINX_CONF_DIR="/etc/nginx"
 NGINX_CONF_D="${NGINX_CONF_DIR}/conf.d"
 
