@@ -328,92 +328,8 @@ if [[ -z "${DOMAIN}" ]]; then
     exit 1
 fi
 
-# 设置 CONF_FILE 变量（此处设置文件名）
-CONF_FILE="${NGINX_CONF_D}/${DOMAIN}.conf"
-
-# 检查 CONF_FILE 路径是否为绝对路径
-if [[ "${CONF_FILE}" != /* ]]; then
-    CONF_FILE="${NGINX_CONF_D}/$(basename "${CONF_FILE}")"
-fi
-
-# 在生成配置前输出调试信息
-echo "DEBUG: DOMAIN=${DOMAIN}"
-echo "DEBUG: CONF_FILE=${CONF_FILE}"
-
-#######################################################
-# 5. 安装并使用 acme.sh 申请 Let’s Encrypt SSL 证书 #
-#######################################################
-echo "-----------------------------"
-echo "  安装 acme.sh 并申请 Let’s Encrypt 证书"
-echo "-----------------------------"
-
-SSL_DIR="/etc/ssl/${DOMAIN}"
-mkdir -p "${SSL_DIR}"
-
-if [[ ! -d "/root/.acme.sh" ]]; then
-    echo "正在 Clone acme.sh 并安装到 ~/.acme.sh ..."
-    git clone https://github.com/acmesh-official/acme.sh.git "/root/.acme.sh"
-    cd "/root/.acme.sh"
-    ./acme.sh --install --home "/root/.acme.sh" \
-        --accountemail "${EMAIL}" \
-        --nocron
-    cd - &>/dev/null
-else
-    echo "检测到 /root/.acme.sh 已存在，跳过 acme.sh 安装。"
-fi
-
-export PATH="/root/.acme.sh:${PATH}"
-
-# --- 新增：webroot 路径和 Nginx 配置一致性检测与手动测试 ---
-echo "-----------------------------"
-echo "  检查 .well-known/acme-challenge 路径可访问性"
-echo "-----------------------------"
-TEST_TOKEN="acme_test_$(date +%s)"
-TEST_FILE="${WEB_ROOT}/.well-known/acme-challenge/${TEST_TOKEN}"
-mkdir -p "${WEB_ROOT}/.well-known/acme-challenge"
-echo "test_ok" > "${TEST_FILE}"
-
-TEST_URL="http://${DOMAIN}/.well-known/acme-challenge/${TEST_TOKEN}"
-HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${TEST_URL}")
-
-if [[ "${HTTP_CODE}" != "200" ]]; then
-    echo "⛔ 检测失败：无法通过 HTTP 访问 ${TEST_URL}，请检查 Nginx 配置、webroot 路径和防火墙。"
-    echo "建议手动访问该 URL，确认能看到 test_ok 内容。"
-    rm -f "${TEST_FILE}"
-    exit 1
-else
-    echo "✅ .well-known/acme-challenge 路径可正常访问。"
-    rm -f "${TEST_FILE}"
-fi
-echo
-
-echo "开始申请证书（域名：${DOMAIN}，Email：${EMAIL}）……"
-~/.acme.sh/acme.sh --issue --webroot "${WEB_ROOT}" -d "${DOMAIN}" \
-    --keylength ec-256 \
-    --accountemail "${EMAIL}" \
-    || { echo "⛔ 证书申请失败：请检查域名解析是否已生效、80 端口是否对外开放、Nginx 配置与 webroot 路径是否一致。"; exit 1; }
-
-echo "正在将证书安装到目录：${SSL_DIR} ..."
-~/.acme.sh/acme.sh --install-cert -d "${DOMAIN}" \
-    --ecc \
-    --fullchain-file "${SSL_DIR}/fullchain.pem" \
-    --key-file       "${SSL_DIR}/privkey.pem" \
-    --reloadcmd      "systemctl reload nginx" \
-    || { echo "⛔ 证书安装失败！"; exit 1; }
-
-echo "✅ Let’s Encrypt 证书已生成并部署到 ${SSL_DIR}。"
-echo
-
-##########################################################
-# 6. 生成 Nginx 配置并启用站点（80→443 重定向 + HTTPS） #
-##########################################################
-echo "-----------------------------"
-echo "  生成并启用 Nginx 虚拟主机配置"
-echo "-----------------------------"
-
+# 设置 NGINX_CONF_D 变量（确保为绝对路径）
 NGINX_CONF_DIR="/etc/nginx"
-NGINX_SITES_AVAILABLE="${NGINX_CONF_DIR}/sites-available"
-NGINX_SITES_ENABLED="${NGINX_CONF_DIR}/sites-enabled"
 NGINX_CONF_D="${NGINX_CONF_DIR}/conf.d"
 
 # 保证 conf.d 目录存在
@@ -427,22 +343,18 @@ if [[ -z "${DOMAIN}" ]]; then
     exit 1
 fi
 
-# 设置 CONF_FILE 变量（此处设置文件名）
+# 设置 CONF_FILE 变量（此处设置文件名，确保绝对路径）
 CONF_FILE="${NGINX_CONF_D}/${DOMAIN}.conf"
 
-# 检查 CONF_FILE 路径是否为绝对路径
-if [[ "${CONF_FILE}" != /* ]]; then
-    CONF_FILE="${NGINX_CONF_D}/$(basename "${CONF_FILE}")"
-fi
-
 # 在生成配置前输出调试信息
+echo "DEBUG: NGINX_CONF_D=${NGINX_CONF_D}"
 echo "DEBUG: DOMAIN=${DOMAIN}"
 echo "DEBUG: CONF_FILE=${CONF_FILE}"
 
 # 检查是否有写入权限
 if ! touch "${CONF_FILE}" 2>/dev/null; then
-    echo "⛔ 无法写入 ${CONF_FILE}，请确认脚本以 root 权限运行，且 /etc/nginx/conf.d/ 目录存在且可写。"
-    ls -ld /etc/nginx/conf.d
+    echo "⛔ 无法写入 ${CONF_FILE}，请确认脚本以 root 权限运行，且 ${NGINX_CONF_D} 目录存在且可写。"
+    ls -ld "${NGINX_CONF_D}"
     id
     exit 1
 fi
