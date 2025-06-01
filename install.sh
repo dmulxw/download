@@ -56,7 +56,7 @@ fi
 
 echo
 echo "######################################################"
-echo " 检测到发行版信息："
+echo "  棉测到发行版信息："
 echo "   ID=${OS_ID}"
 echo "   ID_LIKE=${OS_FAMILY}"
 if $IS_DEBIAN_FAMILY; then
