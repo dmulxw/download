@@ -350,9 +350,15 @@ export PATH="/root/.acme.sh:${PATH}"
 echo "-----------------------------"
 echo "  检查 .well-known/acme-challenge 路径可访问性"
 echo "-----------------------------"
-# 检查 .well-known/acme-challenge 路径可访问性前，确保有写权限
+
 ACME_DIR="${WEB_ROOT}/.well-known/acme-challenge"
 mkdir -p "${ACME_DIR}"
+
+# 检查写权限并输出调试信息
+echo "DEBUG: ACME_DIR=${ACME_DIR}"
+ls -ld "${ACME_DIR}"
+id
+
 if ! touch "${ACME_DIR}/.permtest" 2>/dev/null; then
     echo "⛔ 无法写入 ${ACME_DIR}，请检查目录权限，确保当前用户（$(id -un)）有写权限。"
     ls -ld "${ACME_DIR}"
@@ -364,6 +370,14 @@ rm -f "${ACME_DIR}/.permtest"
 TEST_TOKEN="acme_test_$(date +%s)"
 TEST_FILE="${ACME_DIR}/${TEST_TOKEN}"
 echo "test_ok" > "${TEST_FILE}"
+
+# 检查文件是否实际写入成功
+if [[ ! -f "${TEST_FILE}" ]]; then
+    echo "⛔ 测试文件 ${TEST_FILE} 未能成功创建，请检查目录权限和磁盘空间。"
+    exit 1
+fi
+
+ls -l "${TEST_FILE}"
 
 TEST_URL="http://${DOMAIN}/.well-known/acme-challenge/${TEST_TOKEN}"
 HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${TEST_URL}")
