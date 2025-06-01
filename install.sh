@@ -56,7 +56,7 @@ fi
 
 echo
 echo "######################################################"
-echo "  棉测到发行版信息："
+echo "  检测到发行版信息："
 echo "   ID=${OS_ID}"
 echo "   ID_LIKE=${OS_FAMILY}"
 if $IS_DEBIAN_FAMILY; then
@@ -330,8 +330,8 @@ echo "######################################################"
 echo "  安装并配置 acme.sh 申请 SSL 证书"
 echo "######################################################"
 
-ACME_SH_DIR="/www/letsencrypt/acme.sh"
-if [ -d "$ACME_SH_DIR" ]; then
+ACME_INSTALL_DIR="/root/.acme.sh"
+if [ -d "$ACME_INSTALL_DIR" ]; then
     echo "ℹ️ 检测到 acme.sh 已安装，将跳过安装步骤。"
 else
     echo "正在安装 acme.sh ..."
@@ -339,61 +339,150 @@ else
     echo "✅ acme.sh 安装完成。"
 fi
 
-# shellcheck disable=SC1091
-source ~/.bashrc
-
-# 申请 SSL 证书
-echo "正在申请 SSL 证书，请稍候 ..."
-if ! acme.sh --issue -d "${DOMAIN}" --webroot "/var/www/${DOMAIN}/html" --staging --force; then
-    echo "⛔ SSL 证书申请失败，请检查域名解析与网络连接。"
+# 确定 acme.sh 可执行路径
+ACME_BIN="/root/.acme.sh/acme.sh"
+if [ ! -f "$ACME_BIN" ]; then
+    echo "⛔ 未找到 acme.sh 可执行文件，请检查安装是否成功。"
     exit 1
 fi
 
-echo "✅ SSL 证书申请成功。"
+# 生成临时 Nginx 配置，仅用于 HTTP 验证
+echo "######################################################"
+echo "  生成临时 Nginx 配置：仅监听 80 并支持 ACME challenge"
+echo "######################################################"
 
-# 安装证书到 Nginx
-echo "正在安装证书到 Nginx 配置 ..."
-if ! acme.sh --install-cert -d "${DOMAIN}" \
-    --key-file "/etc/nginx/ssl/${DOMAIN}.key" \
-    --fullchain-file "/etc/nginx/ssl/${DOMAIN}.cer" \
-    --reloadcmd "systemctl reload nginx" \
-    --force; then
-    echo "⛔ 安装证书失败！"
+NGINX_CONF_D="/etc/nginx/conf.d"
+TEMP_CONF="${NGINX_CONF_D}/${DOMAIN}.conf"
+
+if [[ ! -d "${NGINX_CONF_D}" ]]; then
+    mkdir -p "${NGINX_CONF_D}"
+fi
+
+cat > "${TEMP_CONF}" <<EOF
+# 临时配置：仅监听 80，供 acme.sh 进行 HTTP 验证
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${DOMAIN} www.${DOMAIN};
+
+    location ^~ /.well-known/acme-challenge/ {
+        root ${WEB_ROOT};
+        default_type "text/plain";
+        try_files \$uri =404;
+    }
+
+    # 其余请求返回 404
+    location / {
+        return 404;
+    }
+}
+EOF
+
+echo "✅ 临时配置已写入：${TEMP_CONF}"
+echo "正在测试 Nginx 配置语法..."
+nginx -t || { echo "⛔ 临时 Nginx 配置检测失败，请检查 ${TEMP_CONF}。"; exit 1; }
+
+echo "正在重载 Nginx 服务..."
+systemctl reload nginx
+
+echo "✅ 临时 Nginx 已启动（80 端口监听 ACME challenge）。"
+echo
+
+# 检查 ACME challenge 可访问
+echo "######################################################"
+echo "  检查 .well-known/acme-challenge 路径可访问性"
+echo "######################################################"
+
+ACME_DIR="${WEB_ROOT}/.well-known/acme-challenge"
+mkdir -p "${ACME_DIR}"
+
+if ! touch "${ACME_DIR}/.permtest" 2>/dev/null; then
+    echo "⛔ 无法写入 ${ACME_DIR}，请检查目录权限，确保 Nginx 运行用户有写权限。"
+    exit 1
+fi
+rm -f "${ACME_DIR}/.permtest"
+
+TEST_TOKEN="acme_test_$(date +%s)"
+TEST_FILE="${ACME_DIR}/${TEST_TOKEN}"
+echo "test_ok" > "${TEST_FILE}"
+chmod 644 "${TEST_FILE}"
+
+if ! ss -ltnp | grep -q ':80'; then
+    echo "⛔ Nginx 未监听 80 端口，请检查并确保 Nginx 已 reload。"
+    nginx -t
+    systemctl reload nginx
     exit 1
 fi
 
-echo "✅ 证书安装完成。"
+TEST_URL="http://${DOMAIN}/.well-known/acme-challenge/${TEST_TOKEN}"
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$TEST_URL")
+
+if [[ "$HTTP_CODE" != "200" ]]; then
+    echo "⛔ 检测失败：无法通过 HTTP 访问 ${TEST_URL} （状态码 ${HTTP_CODE}），请检查 Nginx 配置与防火墙。"
+    rm -f "${TEST_FILE}"
+    exit 1
+else
+    echo "✅ .well-known/acme-challenge 路径可正常访问。"
+    rm -f "${TEST_FILE}"
+fi
+echo
+
+# 申请证书
+echo "开始申请 Let’s Encrypt 证书（域名：${DOMAIN}，Email：${EMAIL}）……"
+
+SSL_DIR="/etc/nginx/ssl/${DOMAIN}"
+mkdir -p "${SSL_DIR}"
+
+"$ACME_BIN" --issue --webroot "${WEB_ROOT}" -d "${DOMAIN}" -d "www.${DOMAIN}" \
+    --keylength ec-256 \
+    --accountemail "${EMAIL}" \
+    || { echo "⛔ 证书申请失败：请检查域名解析是否已生效、80 端口是否对外开放、Nginx challenge 配置是否生效。"; exit 1; }
+
+echo "正在将证书安装到 ${SSL_DIR} ..."
+"$ACME_BIN" --install-cert -d "${DOMAIN}" \
+    --key-file   "${SSL_DIR}/${DOMAIN}.key" \
+    --fullchain-file "${SSL_DIR}/${DOMAIN}.cer" \
+    --reloadcmd  "systemctl reload nginx" \
+    || { echo "⛔ 证书安装失败！"; exit 1; }
+
+echo "✅ Let’s Encrypt 证书已生成并部署到 ${SSL_DIR}。"
 echo
 
 ##############################################
-# 7. 生成 Nginx 正式配置并启用站点        #
+# 7. 生成 Nginx 正式配置并启用站点         #
 ##############################################
 echo "######################################################"
 echo "  生成 Nginx 正式配置并启用站点"
 echo "######################################################"
 
-NGINX_CONF="/etc/nginx/sites-available/${DOMAIN}.conf"
-if [ -f "$NGINX_CONF" ]; then
+NGINX_CONF_AVAILABLE="/etc/nginx/sites-available"
+NGINX_CONF_ENABLED="/etc/nginx/sites-enabled"
+mkdir -p "${NGINX_CONF_AVAILABLE}" "${NGINX_CONF_ENABLED}"
+NGINX_CONF_FILE="${NGINX_CONF_AVAILABLE}/${DOMAIN}.conf"
+
+if [ -f "${NGINX_CONF_FILE}" ]; then
     echo "ℹ️ 检测到 Nginx 配置文件已存在，将跳过此步骤。"
 else
     echo "正在生成 Nginx 配置文件 ..."
-    cat > "$NGINX_CONF" <<EOF
+    cat > "${NGINX_CONF_FILE}" <<EOF
 server {
     listen 80;
-    server_name ${DOMAIN};
+    listen [::]:80;
+    server_name ${DOMAIN} www.${DOMAIN};
 
-    # 强制 HTTPS 重定向
+    # 将所有 HTTP 请求重定向到 HTTPS
     return 301 https://\$host\$request_uri;
 }
 
 server {
     listen 443 ssl http2;
-    server_name ${DOMAIN};
+    listen [::]:443 ssl http2;
+    server_name ${DOMAIN} www.${DOMAIN};
 
     ssl_certificate     /etc/nginx/ssl/${DOMAIN}.cer;
     ssl_certificate_key /etc/nginx/ssl/${DOMAIN}.key;
 
-    # 其他 SSL 配置
+    # 推荐的 SSL 配置
     ssl_protocols       TLSv1.2 TLSv1.3;
     ssl_ciphers         HIGH:!aNULL:!MD5;
     ssl_prefer_server_ciphers on;
@@ -405,18 +494,23 @@ server {
         try_files \$uri \$uri/ =404;
     }
 
-    # 其他自定义配置
+    # 确保 ACME challenge 路径可访问
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/${DOMAIN}/html;
+        default_type "text/plain";
+        try_files \$uri =404;
+    }
 }
 EOF
-    echo "✅ Nginx 配置文件生成完毕：$NGINX_CONF"
+    echo "✅ Nginx 配置文件生成完毕：${NGINX_CONF_FILE}"
 fi
 
 # 启用站点配置
-if [ -L "/etc/nginx/sites-enabled/${DOMAIN}.conf" ]; then
+if [ -L "${NGINX_CONF_ENABLED}/${DOMAIN}.conf" ]; then
     echo "ℹ️ 站点配置已启用，无需重复操作。"
 else
     echo "正在启用站点配置 ..."
-    ln -s "$NGINX_CONF" "/etc/nginx/sites-enabled/${DOMAIN}.conf"
+    ln -s "${NGINX_CONF_FILE}" "${NGINX_CONF_ENABLED}/${DOMAIN}.conf"
     echo "✅ 站点配置已启用。"
 fi
 
@@ -434,27 +528,26 @@ fi
 echo
 
 ##############################################
-# 8. 安装并配置 cron 任务自动续期证书     #
+# 8. 安装并配置 cron 任务自动续期证书        #
 ##############################################
 echo "######################################################"
 echo "  安装并配置 cron 任务自动续期证书"
 echo "######################################################"
 
-CRON_JOB="0 1 * * * /www/letsencrypt/acme.sh --cron --home /www/letsencrypt > /dev/null 2>&1"
+CRON_JOB="0 1 1 * * /root/.acme.sh/acme.sh --cron --home /root/.acme.sh > /dev/null 2>&1"
 
-# 检查并添加 Crontab 任务
-if crontab -l | grep -q "${CRON_JOB}"; then
-    echo "ℹ️ Crontab 任务已存在，无需重复添加。"
+# 检查并添加系统 crontab 任务
+if grep -q "/root/.acme.sh/acme.sh --cron" /etc/crontab; then
+    echo "ℹ️ 系统 Crontab 中已存在 acme.sh 续期任务，跳过添加。"
 else
-    echo "正在添加 Crontab 任务 ..."
-    (crontab -l 2>/dev/null; echo "${CRON_JOB}") | crontab -
-    echo "✅ Crontab 任务添加成功：每月 1 日 01:00 自动续期证书"
+    echo "${CRON_JOB}" >> /etc/crontab
+    echo "✅ 已添加 acme.sh 证书续期的系统 Crontab 任务。"
 fi
 
 echo
 
 ##############################################
-# 9. 提示用户检查防火墙                   #
+# 9. 提示用户检查防火墙                      #
 ##############################################
 echo "######################################################"
 echo "  安装完成！请检查防火墙设置"
@@ -477,7 +570,7 @@ if command -v firewall-cmd &>/dev/null; then
 fi
 
 if command -v iptables &>/dev/null; then
-    iptables -L -n | grep -E "80|443" &>/dev/null
+    iptables -L -n | grep -E "tcp dpt:80|tcp dpt:443" &>/dev/null
     if [ "$?" -eq 0 ]; then
         echo "✅ iptables 已放行 80/443 端口。"
     else
@@ -486,7 +579,10 @@ if command -v iptables &>/dev/null; then
 fi
 
 echo
-echo "🎉 所有步骤已成功完成！请访问您的域名检查站点是否正常。"
+echo "🎉 所有步骤已成功完成！请访问 https://${DOMAIN} 检查站点是否正常。"
 echo "📅 请记得定期检查 SSL 证书有效期，确保自动续期任务正常运行。"
 echo "如需帮助，请查阅相关文档或联系支持。"
 echo "######################################################"
+echo
+
+exit 0
