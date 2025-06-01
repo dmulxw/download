@@ -69,7 +69,9 @@ get_domain() {
     exec 3<&0
     exec < /dev/tty
     for ((i=1; i<=MAX_TRIES; i++)); do
-        read -rp $'\e[36m请输入要绑定的域名（第 '${i}' 次，共 '${MAX_TRIES}' 次机会）：\e[0m' input_domain
+        # 使用 printf 输出彩色提示，避免 read -rp 无法正确解析转义
+        printf "${CYAN}请输入要绑定的域名${RESET} "
+        read input_domain
         if [[ -n "$input_domain" && "$input_domain" =~ ^[A-Za-z0-9.-]+$ ]]; then
             DOMAIN="$input_domain"
             echo -e "${GREEN}✅ 已确认域名：${DOMAIN}${RESET}"
@@ -96,7 +98,8 @@ get_email() {
     exec 3<&0
     exec < /dev/tty
     for ((i=1; i<=MAX_TRIES; i++)); do
-        read -rp $'\e[36m请输入用于申请 SSL 证书的 Email（第 '${i}' 次，共 '${MAX_TRIES}' 次机会）：\e[0m' input_email
+        printf "${CYAN}请输入用于申请 SSL 证书的 Email${RESET} "
+        read input_email
         if [[ -n "$input_email" && "$input_email" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
             EMAIL="$input_email"
             echo -e "${GREEN}✅ 已确认 Email：${EMAIL}${RESET}"
