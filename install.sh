@@ -331,6 +331,11 @@ fi
 # 设置 CONF_FILE 变量（此处设置文件名）
 CONF_FILE="${NGINX_CONF_D}/${DOMAIN}.conf"
 
+# 检查 CONF_FILE 路径是否为绝对路径
+if [[ "${CONF_FILE}" != /* ]]; then
+    CONF_FILE="${NGINX_CONF_D}/$(basename "${CONF_FILE}")"
+fi
+
 # 在生成配置前输出调试信息
 echo "DEBUG: DOMAIN=${DOMAIN}"
 echo "DEBUG: CONF_FILE=${CONF_FILE}"
@@ -424,6 +429,11 @@ fi
 
 # 设置 CONF_FILE 变量（此处设置文件名）
 CONF_FILE="${NGINX_CONF_D}/${DOMAIN}.conf"
+
+# 检查 CONF_FILE 路径是否为绝对路径
+if [[ "${CONF_FILE}" != /* ]]; then
+    CONF_FILE="${NGINX_CONF_D}/$(basename "${CONF_FILE}")"
+fi
 
 # 在生成配置前输出调试信息
 echo "DEBUG: DOMAIN=${DOMAIN}"
