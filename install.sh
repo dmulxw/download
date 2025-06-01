@@ -1,4 +1,3 @@
-```bash
 #!/usr/bin/env bash
 # -*- coding: utf-8 -*-
 #
@@ -29,9 +28,9 @@
 
 set -e
 
-###########################
-# 0. 检测当前发行版类型  #
-###########################
+###########################################
+# 0. 检测当前发行版类型                    #
+###########################################
 OS_ID=""
 OS_FAMILY=""
 
@@ -55,7 +54,8 @@ if [[ "$OS_ID" =~ (centos|rhel|almalinux|rocky) ]] || [[ "$OS_FAMILY" =~ (rhel|f
     IS_RHEL_FAMILY=true
 fi
 
-echo "------------------------------------------------------"
+echo
+echo "######################################################"
 echo " 检测到发行版信息："
 echo "   ID=${OS_ID}"
 echo "   ID_LIKE=${OS_FAMILY}"
@@ -67,12 +67,12 @@ else
     echo "   → 未知发行版系列，本脚本仅支持 Debian/Ubuntu 与 RHEL/CentOS/AlmaLinux"
     exit 1
 fi
-echo "------------------------------------------------------"
+echo "######################################################"
 echo
 
-###########################
-# 1. 交互式获取“域名”  #
-###########################
+###########################################
+# 1. 交互式获取“域名”                     #
+###########################################
 get_domain() {
     MAX_TRIES=3
     DOMAIN=""
@@ -97,9 +97,9 @@ get_domain() {
     echo
 }
 
-###############################
-# 2. 交互式获取“Email”地址  #
-###############################
+###########################################
+# 2. 交互式获取“Email”地址                #
+###########################################
 get_email() {
     MAX_TRIES=3
     EMAIL=""
@@ -131,9 +131,9 @@ get_email
 ##############################################
 # 3. 检查是否为 root，并安装所需依赖（分发） #
 ##############################################
-echo "-----------------------------"
+echo "######################################################"
 echo "  开始检查并安装必要软件包"
-echo "-----------------------------"
+echo "######################################################"
 
 if [[ "$(id -u)" -ne 0 ]]; then
     echo "⛔ 请使用 root 用户或通过 sudo 运行本脚本！"
@@ -235,9 +235,9 @@ echo
 #############################################
 # 4. 检查并放行 80/443 端口（防火墙自动处理） #
 #############################################
-echo "-----------------------------"
+echo "######################################################"
 echo "  检查并放行 80/443 端口"
-echo "-----------------------------"
+echo "######################################################"
 
 open_ports() {
     # 检查并放行 80/443 端口，支持 ufw、firewalld、iptables
@@ -283,264 +283,13 @@ echo
 ####################################
 # 5. 下载并解压 最新 web.zip (GitHub release) #
 ####################################
-echo "-----------------------------"
+echo "######################################################"
 echo "  下载并部署最新版本 web.zip"
-echo "-----------------------------"
+echo "######################################################"
 
 ZIP_URL="https://github.com/dmulxw/download/releases/latest/download/web.zip"
 WEB_ROOT="/var/www/${DOMAIN}/html"
 mkdir -p "${WEB_ROOT}"
 
 TMP_ZIP="/tmp/web_${DOMAIN}.zip"
-echo "正在从 ${ZIP_URL} 下载最新 web.zip 到 ${TMP_ZIP} ..."
-curl -fsSL "${ZIP_URL}" -o "${TMP_ZIP}" || {
-    echo "⛔ 下载失败：请检查网络或 GitHub Releases URL 是否可访问。"
-    exit 1
-}
-
-echo "正在解压到 ${WEB_ROOT} ..."
-unzip -o "${TMP_ZIP}" -d "/var/www/${DOMAIN}/" \
-    || { echo "⛔ 解压 web.zip 失败！"; exit 1; }
-rm -f "${TMP_ZIP}"
-
-# 设置网站根目录权限
-if $IS_DEBIAN_FAMILY; then
-    web_user="www-data"
-    web_group="www-data"
-else
-    web_user="nginx"
-    web_group="nginx"
-fi
-if ! id "${web_user}" &>/dev/null; then
-    web_user="www-data"
-    web_group="www-data"
-fi
-
-chown -R "${web_user}:${web_group}" "/var/www/${DOMAIN}/"
-find "/var/www/${DOMAIN}/" -type d -exec chmod 755 {} \;
-find "/var/www/${DOMAIN}/" -type f -exec chmod 644 {} \;
-
-echo "✅ web 程序已部署到 ${WEB_ROOT}，并已设置文件权限（${web_user}:${web_group}）。"
-echo
-
-###########################################################
-# 6. 生成临时 Nginx 配置，仅用于 ACME challenge（80） #
-###########################################################
-echo "-----------------------------"
-echo "  生成临时 Nginx 配置：仅监听 80 并支持 ACME challenge"
-echo "-----------------------------"
-
-NGINX_CONF_D="/etc/nginx/conf.d"
-TEMP_CONF="${NGINX_CONF_D}/${DOMAIN}.conf"
-
-# 确保 conf.d 目录存在
-if [[ ! -d "${NGINX_CONF_D}" ]]; then
-    mkdir -p "${NGINX_CONF_D}"
-fi
-
-# 写入临时配置（仅允许 challenge 路径，其他一律 404）
-cat > "${TEMP_CONF}" <<EOF
-# 临时配置：仅监听 80，供 acme.sh 进行 HTTP 验证
-server {
-    listen 80;
-    listen [::]:80;
-    server_name ${DOMAIN} www.${DOMAIN};
-
-    location ^~ /.well-known/acme-challenge/ {
-        root ${WEB_ROOT};
-        default_type "text/plain";
-        try_files \$uri =404;
-    }
-
-    # 其余请求返回 404 （可避免干扰）
-    location / {
-        return 404;
-    }
-}
-EOF
-
-echo "✅ 临时配置已写入：${TEMP_CONF}"
-echo "正在测试 Nginx 配置语法..."
-nginx -t || { echo "⛔ 临时 Nginx 配置检测失败，请检查 ${TEMP_CONF}。"; exit 1; }
-
-echo "正在重载 Nginx 服务..."
-systemctl reload nginx
-
-echo "✅ 临时 Nginx 已启动（80 端口监听 ACME challenge）。"
-echo
-
-#############################################
-# 7. 检查 challenge 路径可访问性并申请证书 #
-#############################################
-echo "-----------------------------"
-echo "  检查 .well-known/acme-challenge 路径可访问性"
-echo "-----------------------------"
-
-ACME_DIR="${WEB_ROOT}/.well-known/acme-challenge"
-mkdir -p "${ACME_DIR}"
-
-# 权限校验
-if ! touch "${ACME_DIR}/.permtest" 2>/dev/null; then
-    echo "⛔ 无法写入 ${ACME_DIR}，请检查目录权限，确保 Nginx 运行用户有写权限。"
-    ls -ld "${ACME_DIR}"
-    id
-    exit 1
-fi
-rm -f "${ACME_DIR}/.permtest"
-
-# 写入测试文件并验证 HTTP 可访问
-TEST_TOKEN="acme_test_$(date +%s)"
-TEST_FILE="${ACME_DIR}/${TEST_TOKEN}"
-echo "test_ok" > "${TEST_FILE}"
-chmod 644 "${TEST_FILE}"
-
-# 确保 Nginx 已监听 80
-if ! ss -ltnp | grep -q ':80'; then
-    echo "⛔ Nginx 未监听 80 端口，请检查并确保 Nginx 已 reload。"
-    nginx -t
-    systemctl reload nginx
-    exit 1
-fi
-
-# 访问测试
-TEST_URL="http://${DOMAIN}/.well-known/acme-challenge/${TEST_TOKEN}"
-HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$TEST_URL")
-
-if [[ "$HTTP_CODE" != "200" ]]; then
-    echo "⛔ 检测失败：无法通过 HTTP 访问 $TEST_URL （状态码 $HTTP_CODE），请检查 Nginx 配置与防火墙。"
-    rm -f "${TEST_FILE}"
-    exit 1
-else
-    echo "✅ .well-known/acme-challenge 路径可正常访问。"
-    rm -f "${TEST_FILE}"
-fi
-echo
-
-echo "开始申请 Let’s Encrypt 证书（域名：${DOMAIN}，Email：${EMAIL}）……"
-
-SSL_DIR="/etc/ssl/${DOMAIN}"
-mkdir -p "${SSL_DIR}"
-
-# 安装 acme.sh（如未安装）
-if [[ ! -d "/root/.acme.sh" ]]; then
-    echo "正在 Clone acme.sh 并安装到 ~/.acme.sh ..."
-    git clone https://github.com/acmesh-official/acme.sh.git "/root/.acme.sh"
-    cd "/root/.acme.sh"
-    ./acme.sh --install --home "/root/.acme.sh" \
-        --accountemail "${EMAIL}" \
-        --nocron
-    cd - &>/dev/null
-else
-    echo "检测到 /root/.acme.sh 已存在，跳过 acme.sh 安装。"
-fi
-
-export PATH="/root/.acme.sh:${PATH}"
-
-~/.acme.sh/acme.sh --issue --webroot "${WEB_ROOT}" -d "${DOMAIN}" \
-    --keylength ec-256 \
-    --accountemail "${EMAIL}" \
-    || { echo "⛔ 证书申请失败：请检查域名解析是否已生效、80 端口是否对外开放、Nginx challenge 配置是否生效。"; exit 1; }
-
-echo "正在将证书安装到目录：${SSL_DIR} ..."
-~/.acme.sh/acme.sh --install-cert -d "${DOMAIN}" \
-    --ecc \
-    --fullchain-file "${SSL_DIR}/fullchain.pem" \
-    --key-file       "${SSL_DIR}/privkey.pem" \
-    --reloadcmd      "systemctl reload nginx" \
-    || { echo "⛔ 证书安装失败！"; exit 1; }
-
-echo "✅ Let’s Encrypt 证书已生成并部署到 ${SSL_DIR}。"
-echo
-
-#################################################
-# 8. 生成正式 Nginx 配置并启用站点（80→443）  #
-#################################################
-echo "-----------------------------"
-echo "  生成正式 Nginx 配置（HTTP→HTTPS + HTTPS）"
-echo "-----------------------------"
-
-# 重写同一文件：/etc/nginx/conf.d/${DOMAIN}.conf
-cat > "${TEMP_CONF}" <<EOF
-# 正式配置：监听 80 重定向到 HTTPS；443 提供 HTTPS 服务
-server {
-    listen 80;
-    listen [::]:80;
-    server_name ${DOMAIN} www.${DOMAIN};
-
-    # 仅让 .well-known/acme-challenge/ 可访问，其他请求重定向
-    location ^~ /.well-known/acme-challenge/ {
-        root ${WEB_ROOT};
-        default_type "text/plain";
-        try_files \$uri =404;
-    }
-    return 301 https://\$host\$request_uri;
-}
-
-server {
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
-    server_name ${DOMAIN} www.${DOMAIN};
-
-    ssl_certificate      ${SSL_DIR}/fullchain.pem;
-    ssl_certificate_key  ${SSL_DIR}/privkey.pem;
-
-    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
-
-    root ${WEB_ROOT};
-    index index.html index.htm index.php;
-
-    access_log /var/log/nginx/${DOMAIN}.access.log;
-    error_log  /var/log/nginx/${DOMAIN}.error.log warn;
-
-    location / {
-        try_files \$uri \$uri/ =404;
-    }
-
-    location ^~ /.well-known/acme-challenge/ {
-        root ${WEB_ROOT};
-        default_type "text/plain";
-        try_files \$uri =404;
-    }
-}
-EOF
-
-echo "✅ 正式配置已写入：${TEMP_CONF}"
-
-echo "正在测试 Nginx 配置语法..."
-nginx -t || { echo "⛔ 正式 Nginx 配置检测失败，请检查 ${TEMP_CONF}。"; exit 1; }
-
-echo "正在重载 Nginx 服务..."
-systemctl reload nginx
-
-echo "✅ Nginx 已启动并加载新站点：${DOMAIN}"
-echo
-
-###################################################
-# 9. 配置 acme.sh 续期 Crontab（每月 1 日 01:00） #
-###################################################
-echo "-----------------------------"
-echo "  配置 acme.sh 证书续期 Crontab"
-echo "-----------------------------"
-
-CRON_JOB="0 1 1 * * root /root/.acme.sh/acme.sh --cron --home /root/.acme.sh > /dev/null 2>&1"
-CRON_FILE="/etc/crontab"
-
-# 如果 /etc/crontab 中不存在，则追加
-if ! grep -q "/root/.acme.sh/acme.sh --cron" "$CRON_FILE"; then
-    echo "$CRON_JOB" >> "$CRON_FILE"
-    echo "✅ 已添加 acme.sh 证书续期的系统 Crontab 任务。"
-else
-    echo "ℹ️ 检测到系统 Crontab 已存在 acme.sh 续期任务，跳过添加。"
-fi
-
-echo "------------------------------------------------------"
-echo " 安装完成！请手动检查以下内容："
-echo " 1. 域名解析是否已正确指向本服务器"
-echo " 2. 防火墙设置（确保 80/443 端口已放行）"
-echo " 3. Nginx 日志文件（如有错误，请及时修复）"
-echo " 4. SSL 证书有效性（可通过浏览器或在线工具检查）"
-echo "------------------------------------------------------"
-echo
-
-exit 0
-```
+echo "正在从 ${ZIP_URL} 下载最新 web.zip 到 ${TMP_ZIP} ...
