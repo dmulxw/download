@@ -403,6 +403,15 @@ if [[ ! -d "${NGINX_CONF_D}" ]]; then
     mkdir -p "${NGINX_CONF_D}"
 fi
 
+# 确保 DOMAIN 变量已赋值
+if [[ -z "${DOMAIN}" ]]; then
+    echo "⛔ 变量 DOMAIN 未设置，无法生成 Nginx 配置文件，请检查域名输入流程。"
+    exit 1
+fi
+
+# 设置 CONF_FILE 变量（此处设置文件名）
+CONF_FILE="${NGINX_CONF_D}/${DOMAIN}.conf"
+
 # 在生成配置前输出调试信息
 echo "DEBUG: DOMAIN=${DOMAIN}"
 echo "DEBUG: CONF_FILE=${CONF_FILE}"
