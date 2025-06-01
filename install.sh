@@ -3,12 +3,21 @@
 #
 # install.sh - 兼容 Ubuntu/Debian、CentOS/AlmaLinux/RHEL 等的自动安装脚本
 #              扩展：
-#                1. 直接将网站内容解压到 /var/www/${DOMAIN}/，Nginx 根目录指向该路径
+#                1. 将网站内容解压到 /var/www/${DOMAIN}/，Nginx 根目录指向该路径
 #                2. 如果已有相同证书且距今不足 3 天，先使用现有证书；末尾提示是否重新生成
 #                   —— 强制重新生成时使用 --force 参数
-#                3. 将用户重新生成证书的等待时间延长至 60 秒，并使用彩色提示
+#                3. 用户重新生成证书的等待时间延长至 60 秒，并使用彩色提示
+#                4. 交互式提示和关键输出使用颜色：域名/邮箱输入、网站目录、证书文件路径 等
 #
 set -e
+
+# ANSI 颜色定义
+RED='\e[31m'
+GREEN='\e[32m'
+YELLOW='\e[33m'
+CYAN='\e[36m'
+BLUE='\e[34m'
+RESET='\e[0m'
 
 ###########################################
 # 0. 检测当前发行版类型                    #
@@ -21,7 +30,7 @@ if [[ -f /etc/os-release ]]; then
     OS_ID="$ID"
     OS_FAMILY="$ID_LIKE"
 else
-    echo "⛔ 找不到 /etc/os-release，无法检测发行版类型，请手动确认系统类型后再运行脚本。"
+    echo -e "${RED}⛔ 找不到 /etc/os-release，无法检测发行版类型，请手动确认系统类型后再运行脚本。${RESET}"
     exit 1
 fi
 
@@ -45,7 +54,7 @@ if $IS_DEBIAN_FAMILY; then
 elif $IS_RHEL_FAMILY; then
     echo "   → 归为：RHEL/CentOS/AlmaLinux/Rocky 系列"
 else
-    echo "   → 未知发行版系列，本脚本仅支持 Debian/Ubuntu 与 RHEL/CentOS/AlmaLinux"
+    echo -e "   → 未知发行版系列，本脚本仅支持 Debian/Ubuntu 与 RHEL/CentOS/AlmaLinux"
     exit 1
 fi
 echo "######################################################"
@@ -60,22 +69,22 @@ get_domain() {
     exec 3<&0
     exec < /dev/tty
     for ((i=1; i<=MAX_TRIES; i++)); do
-        read -rp "请输入要绑定的域名（第 ${i} 次，共 ${MAX_TRIES} 次机会）： " input_domain
+        read -rp $'\e[36m请输入要绑定的域名（第 '${i}' 次，共 '${MAX_TRIES}' 次机会）：\e[0m' input_domain
         if [[ -n "$input_domain" && "$input_domain" =~ ^[A-Za-z0-9.-]+$ ]]; then
             DOMAIN="$input_domain"
+            echo -e "${GREEN}✅ 已确认域名：${DOMAIN}${RESET}"
+            echo
             break
         else
-            echo "❌ 域名格式不合法，请重新输入（只能包含字母/数字/点/横杠）。"
+            echo -e "${RED}❌ 域名格式不合法，请重新输入（只能包含字母/数字/点/横杠）。${RESET}"
         fi
         if [[ $i -eq $MAX_TRIES ]]; then
-            echo "⛔ 3 次输入均不合法，安装程序退出。"
+            echo -e "${RED}⛔ 3 次输入均不合法，安装程序退出。${RESET}"
             exec 0<&3
             exit 1
         fi
     done
     exec 0<&3
-    echo "✅ 已确认域名：${DOMAIN}"
-    echo
 }
 
 ###########################################
@@ -87,22 +96,22 @@ get_email() {
     exec 3<&0
     exec < /dev/tty
     for ((i=1; i<=MAX_TRIES; i++)); do
-        read -rp "请输入用于申请 SSL 证书的 Email（第 ${i} 次，共 ${MAX_TRIES} 次机会）： " input_email
+        read -rp $'\e[36m请输入用于申请 SSL 证书的 Email（第 '${i}' 次，共 '${MAX_TRIES}' 次机会）：\e[0m' input_email
         if [[ -n "$input_email" && "$input_email" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
             EMAIL="$input_email"
+            echo -e "${GREEN}✅ 已确认 Email：${EMAIL}${RESET}"
+            echo
             break
         else
-            echo "❌ Email 格式不合法，请重新输入。"
+            echo -e "${RED}❌ Email 格式不合法，请重新输入。${RESET}"
         fi
         if [[ $i -eq $MAX_TRIES ]]; then
-            echo "⛔ 3 次输入均不合法，安装程序退出。"
+            echo -e "${RED}⛔ 3 次输入均不合法，安装程序退出。${RESET}"
             exec 0<&3
             exit 1
         fi
     done
     exec 0<&3
-    echo "✅ 已确认 Email：${EMAIL}"
-    echo
 }
 
 get_domain
@@ -116,16 +125,16 @@ echo "  开始检查并安装必要软件包"
 echo "######################################################"
 
 if [[ "$(id -u)" -ne 0 ]]; then
-    echo "⛔ 请使用 root 用户或通过 sudo 运行本脚本！"
+    echo -e "${RED}⛔ 请使用 root 用户或通过 sudo 运行本脚本！${RESET}"
     exit 1
 fi
 
 NGINX_EXIST=false
 if command -v nginx &>/dev/null; then
     NGINX_EXIST=true
-    echo "ℹ️ 检测到系统已安装 Nginx，将仅新增站点，不重新安装 Nginx。"
+    echo -e "${YELLOW}ℹ️ 检测到系统已安装 Nginx，将仅新增站点，不重新安装 Nginx。${RESET}"
 else
-    echo "ℹ️ 系统未检测到 Nginx，后续将先安装 Nginx。"
+    echo -e "${YELLOW}ℹ️ 系统未检测到 Nginx，后续将先安装 Nginx。${RESET}"
 fi
 
 install_deps_debian() {
@@ -134,7 +143,7 @@ install_deps_debian() {
     apt-get update -y
     if ! $NGINX_EXIST; then
         apt-get install -y nginx
-        echo "✅ 已安装 Nginx。"
+        echo -e "${GREEN}✅ 已安装 Nginx。${RESET}"
     fi
     apt-get install -y curl unzip git socat cron
     systemctl enable nginx
@@ -164,7 +173,7 @@ install_deps_rhel() {
         else
             yum install -y nginx
         fi
-        echo "✅ 已安装 Nginx。"
+        echo -e "${GREEN}✅ 已安装 Nginx。${RESET}"
     fi
     if [[ "$pkg_manager" == "dnf" ]]; then
         dnf install -y curl unzip git socat cronie
@@ -182,16 +191,16 @@ if $IS_DEBIAN_FAMILY; then
 elif $IS_RHEL_FAMILY; then
     install_deps_rhel
 else
-    echo "⛔ 未知系统系列，无法自动安装依赖。"
+    echo -e "${RED}⛔ 未知系统系列，无法自动安装依赖。${RESET}"
     exit 1
 fi
 
 if ! command -v nginx &>/dev/null; then
-    echo "⛔ Nginx 安装或启动失败，请检查网络或包源配置。"
+    echo -e "${RED}⛔ Nginx 安装或启动失败，请检查网络或包源配置。${RESET}"
     exit 1
 fi
 
-echo "✅ 依赖安装与基础服务启动完成。"
+echo -e "${GREEN}✅ 依赖安装与基础服务启动完成。${RESET}"
 echo
 
 #############################################
@@ -234,7 +243,7 @@ open_ports() {
 
 open_ports
 
-echo "✅ 已尝试自动放行 80/443 端口，请手动确认防火墙规则。"
+echo -e "${GREEN}✅ 已尝试自动放行 80/443 端口，请手动确认防火墙规则。${RESET}"
 echo
 
 ####################################
@@ -245,20 +254,19 @@ echo "  下载并部署最新版本 web.zip"
 echo "######################################################"
 
 ZIP_URL="https://github.com/dmulxw/download/releases/latest/download/web.zip"
-# 直接将内容解压到 /var/www/${DOMAIN}
 WEB_ROOT="/var/www/${DOMAIN}"
 mkdir -p "${WEB_ROOT}"
 
 TMP_ZIP="/tmp/web_${DOMAIN}.zip"
-echo "正在从 ${ZIP_URL} 下载最新 web.zip 到 ${TMP_ZIP} ..."
+echo -e "${CYAN}正在从 ${ZIP_URL} 下载最新 web.zip 到 ${TMP_ZIP} ...${RESET}"
 curl -fsSL "${ZIP_URL}" -o "${TMP_ZIP}" || {
-    echo "⛔ 下载失败：请检查网络或 GitHub Releases URL 是否可访问。"
+    echo -e "${RED}⛔ 下载失败：请检查网络或 GitHub Releases URL 是否可访问。${RESET}"
     exit 1
 }
 
-echo "正在解压到 ${WEB_ROOT} ..."
+echo -e "${CYAN}正在解压到 ${BLUE}${WEB_ROOT}${RESET} ...${RESET}"
 unzip -o "${TMP_ZIP}" -d "${WEB_ROOT}" \
-    || { echo "⛔ 解压 web.zip 失败！"; exit 1; }
+    || { echo -e "${RED}⛔ 解压 web.zip 失败！${RESET}"; exit 1; }
 rm -f "${TMP_ZIP}"
 
 if $IS_DEBIAN_FAMILY; then
@@ -277,7 +285,7 @@ chown -R "${web_user}:${web_group}" "${WEB_ROOT}"
 find "${WEB_ROOT}" -type d -exec chmod 755 {} \;
 find "${WEB_ROOT}" -type f -exec chmod 644 {} \;
 
-echo "✅ web 程序已部署到 ${WEB_ROOT}，并已设置文件权限（${web_user}:${web_group}）。"
+echo -e "${GREEN}✅ web 程序已部署到 ${BLUE}${WEB_ROOT}${RESET}，并已设置文件权限（${web_user}:${web_group}）。${RESET}"
 echo
 
 ##############################################
@@ -289,16 +297,16 @@ echo "######################################################"
 
 ACME_INSTALL_DIR="/root/.acme.sh"
 if [ -d "$ACME_INSTALL_DIR" ]; then
-    echo "ℹ️ 检测到 acme.sh 已安装，将跳过安装步骤。"
+    echo -e "${YELLOW}ℹ️ 检测到 acme.sh 已安装，将跳过安装步骤。${RESET}"
 else
-    echo "正在安装 acme.sh ..."
+    echo -e "${CYAN}正在安装 acme.sh ...${RESET}"
     curl https://get.acme.sh | sh
-    echo "✅ acme.sh 安装完成。"
+    echo -e "${GREEN}✅ acme.sh 安装完成。${RESET}"
 fi
 
 ACME_BIN="/root/.acme.sh/acme.sh"
 if [ ! -f "$ACME_BIN" ]; then
-    echo "⛔ 未找到 acme.sh 可执行文件，请检查安装是否成功。"
+    echo -e "${RED}⛔ 未找到 acme.sh 可执行文件，请检查安装是否成功。${RESET}"
     exit 1
 fi
 
@@ -317,7 +325,7 @@ if [ -f "$EXIST_CRT" ]; then
     CERT_MTIME="$crt_mtime"
     if [ "$CERT_AGE_DAYS" -lt 3 ]; then
         USE_EXISTING_CERT=true
-        echo -e "\e[33mℹ️ 检测到 ${DOMAIN} 的证书在 $(date -d @"$crt_mtime" +"%Y-%m-%d") 生成，距今仅 ${CERT_AGE_DAYS} 天，将先使用现有证书配置。\e[0m"
+        echo -e "${YELLOW}ℹ️ 检测到 ${DOMAIN} 的证书在 $(date -d @"$crt_mtime" +"%Y-%m-%d") 生成，距今仅 ${CERT_AGE_DAYS} 天，将先使用现有证书配置。${RESET}"
     fi
 fi
 
@@ -350,14 +358,14 @@ server {
 }
 EOF
 
-    echo "✅ 临时配置已写入：${TEMP_CONF}"
-    echo "正在测试 Nginx 配置语法..."
-    nginx -t || { echo "⛔ 临时 Nginx 配置检测失败，请检查 ${TEMP_CONF}。"; exit 1; }
+    echo -e "${GREEN}✅ 临时配置已写入：${BLUE}${TEMP_CONF}${RESET}"
+    echo -e "${CYAN}正在测试 Nginx 配置语法...${RESET}"
+    nginx -t || { echo -e "${RED}⛔ 临时 Nginx 配置检测失败，请检查 ${TEMP_CONF}。${RESET}"; exit 1; }
 
-    echo "正在重载 Nginx 服务..."
+    echo -e "${CYAN}正在重载 Nginx 服务...${RESET}"
     systemctl reload nginx
 
-    echo "✅ 临时 Nginx 已启动（80 端口监听 ACME challenge）。"
+    echo -e "${GREEN}✅ 临时 Nginx 已启动（80 端口监听 ACME challenge）。${RESET}"
     echo
 
     echo "######################################################"
@@ -368,7 +376,7 @@ EOF
     mkdir -p "${ACME_DIR}"
 
     if ! touch "${ACME_DIR}/.permtest" 2>/dev/null; then
-        echo "⛔ 无法写入 ${ACME_DIR}，请检查目录权限，确保 Nginx 运行用户有写权限。"
+        echo -e "${RED}⛔ 无法写入 ${ACME_DIR}，请检查目录权限，确保 Nginx 运行用户有写权限。${RESET}"
         exit 1
     fi
     rm -f "${ACME_DIR}/.permtest"
@@ -379,7 +387,7 @@ EOF
     chmod 644 "${TEST_FILE}"
 
     if ! ss -ltnp | grep -q ':80'; then
-        echo "⛔ Nginx 未监听 80 端口，请检查并确保 Nginx 已 reload。"
+        echo -e "${RED}⛔ Nginx 未监听 80 端口，请检查并确保 Nginx 已 reload。${RESET}"
         nginx -t
         systemctl reload nginx
         exit 1
@@ -389,16 +397,16 @@ EOF
     HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$TEST_URL")
 
     if [[ "$HTTP_CODE" != "200" ]]; then
-        echo "⛔ 检测失败：无法通过 HTTP 访问 ${TEST_URL} （状态码 ${HTTP_CODE}），请检查 Nginx 配置与防火墙。"
+        echo -e "${RED}⛔ 检测失败：无法通过 HTTP 访问 ${TEST_URL} （状态码 ${HTTP_CODE}），请检查 Nginx 配置与防火墙。${RESET}"
         rm -f "${TEST_FILE}"
         exit 1
     else
-        echo "✅ .well-known/acme-challenge 路径可正常访问。"
+        echo -e "${GREEN}✅ .well-known/acme-challenge 路径可正常访问。${RESET}"
         rm -f "${TEST_FILE}"
     fi
     echo
 
-    echo "开始申请 Let’s Encrypt 证书（域名：${DOMAIN}，Email：${EMAIL}）……"
+    echo -e "${CYAN}开始申请 Let’s Encrypt 证书（域名：${DOMAIN}，Email：${EMAIL}）……${RESET}"
 
     SSL_DIR="/etc/nginx/ssl/${DOMAIN}"
     mkdir -p "${SSL_DIR}"
@@ -406,19 +414,19 @@ EOF
     "$ACME_BIN" --issue --webroot "${WEB_ROOT}" -d "${DOMAIN}" -d "www.${DOMAIN}" \
         --keylength ec-256 \
         --accountemail "${EMAIL}" \
-        || { echo "⛔ 证书申请失败：请检查域名解析是否已生效、80 端口是否对外开放、Nginx challenge 配置是否生效。"; exit 1; }
+        || { echo -e "${RED}⛔ 证书申请失败：请检查域名解析是否已生效、80 端口是否对外开放、Nginx challenge 配置是否生效。${RESET}"; exit 1; }
 
-    echo "正在将证书安装到 ${SSL_DIR} ..."
+    echo -e "${CYAN}正在将证书安装到 ${BLUE}${SSL_DIR}${RESET} ...${RESET}"
     "$ACME_BIN" --install-cert -d "${DOMAIN}" \
         --key-file   "${SSL_DIR}/${DOMAIN}.key" \
         --fullchain-file "${SSL_DIR}/${DOMAIN}.cer" \
         --reloadcmd  "systemctl reload nginx" \
-        || { echo "⛔ 证书安装失败！"; exit 1; }
+        || { echo -e "${RED}⛔ 证书安装失败！${RESET}"; exit 1; }
 
-    echo "✅ Let’s Encrypt 证书已生成并部署到 ${SSL_DIR}。"
+    echo -e "${GREEN}✅ Let’s Encrypt 证书已生成并部署到 ${BLUE}${SSL_DIR}${RESET}。${RESET}"
     echo
 else
-    echo "ℹ️ 使用已有证书，无需重新申请。"
+    echo -e "${YELLOW}ℹ️ 使用已有证书，无需重新申请。${RESET}"
     SSL_DIR="/etc/nginx/ssl/${DOMAIN}"
 fi
 
@@ -436,7 +444,7 @@ mkdir -p "${NGINX_CONF_AVAILABLE}" "${NGINX_CONF_ENABLED}"
 NGINX_CONF_FILE="${NGINX_CONF_AVAILABLE}/${DOMAIN}.conf"
 
 # 始终覆盖旧配置，确保路径指向 /var/www/${DOMAIN}
-echo "正在写入 Nginx 配置文件：${NGINX_CONF_FILE} ..."
+echo -e "${CYAN}正在写入 Nginx 配置文件：${BLUE}${NGINX_CONF_FILE}${RESET} ..."
 cat > "${NGINX_CONF_FILE}" <<EOF
 server {
     listen 80;
@@ -472,23 +480,23 @@ server {
     }
 }
 EOF
-echo "✅ Nginx 配置文件已写入：${NGINX_CONF_FILE}"
+echo -e "${GREEN}✅ Nginx 配置文件已写入：${BLUE}${NGINX_CONF_FILE}${RESET}"
 
 # 启用站点配置
 if [ -L "${NGINX_CONF_ENABLED}/${DOMAIN}.conf" ]; then
-    echo "ℹ️ 站点配置软链接已存在，先移除旧链接再重新创建。"
+    echo -e "${YELLOW}ℹ️ 站点配置软链接已存在，先移除旧链接再重新创建。${RESET}"
     rm -f "${NGINX_CONF_ENABLED}/${DOMAIN}.conf"
 fi
 ln -s "${NGINX_CONF_FILE}" "${NGINX_CONF_ENABLED}/${DOMAIN}.conf"
-echo "✅ 站点配置已启用：${NGINX_CONF_ENABLED}/${DOMAIN}.conf"
+echo -e "${GREEN}✅ 站点配置已启用：${BLUE}${NGINX_CONF_ENABLED}/${DOMAIN}.conf${RESET}"
 
-echo "正在测试 Nginx 配置 ..."
+echo -e "${CYAN}正在测试 Nginx 配置 ...${RESET}"
 if nginx -t; then
-    echo "Nginx 配置测试通过，正在重载服务 ..."
+    echo -e "${CYAN}Nginx 配置测试通过，正在重载服务 ...${RESET}"
     systemctl reload nginx
-    echo "✅ Nginx 服务已重载。"
+    echo -e "${GREEN}✅ Nginx 服务已重载。${RESET}"
 else
-    echo "⛔ Nginx 配置测试失败，请检查配置文件语法。"
+    echo -e "${RED}⛔ Nginx 配置测试失败，请检查配置文件语法。${RESET}"
     exit 1
 fi
 
@@ -503,10 +511,10 @@ echo "######################################################"
 
 CRON_JOB="0 1 1 * * /root/.acme.sh/acme.sh --cron --home /root/.acme.sh > /dev/null 2>&1"
 if grep -q "/root/.acme.sh/acme.sh --cron" /etc/crontab; then
-    echo "ℹ️ 系统 Crontab 中已存在 acme.sh 续期任务，跳过添加。"
+    echo -e "${YELLOW}ℹ️ 系统 Crontab 中已存在 acme.sh 续期任务，跳过添加。${RESET}"
 else
     echo "${CRON_JOB}" >> /etc/crontab
-    echo "✅ 已添加 acme.sh 证书续期的系统 Crontab 任务。"
+    echo -e "${GREEN}✅ 已添加 acme.sh 证书续期的系统 Crontab 任务。${RESET}"
 fi
 
 echo
@@ -516,39 +524,39 @@ echo
 ##############################################
 if $USE_EXISTING_CERT; then
     echo "######################################################"
-    echo -e "\e[33m  检测到已有证书距今不足 3 天"
-    echo -e "  旧证书生成日期：$(date -d @"$CERT_MTIME" +'%Y-%m-%d')，已过去 ${CERT_AGE_DAYS} 天。\e[0m"
-    echo -e "\e[36m  若要强制重新生成，请在 60 秒内输入 Y，或等待超时跳过。\e[0m"
+    echo -e "${YELLOW}  检测到已有证书距今不足 3 天${RESET}"
+    echo -e "${YELLOW}  旧证书生成日期：$(date -d @"$CERT_MTIME" +'%Y-%m-%d')，已过去 ${CERT_AGE_DAYS} 天。${RESET}"
+    echo -e "${CYAN}  若要强制重新生成，请在 60 秒内输入 ${GREEN}Y${CYAN}，或等待超时跳过。${RESET}"
     # 切换到 /dev/tty 读取，避免管道导致直接跳过
     exec 3<&0
     exec < /dev/tty
     if read -t 60 -rn1 yn; then
         echo
         if [[ "$yn" =~ [Yy] ]]; then
-            echo -e "\e[32m✅ 用户选择强制重新生成证书，开始执行……\e[0m"
+            echo -e "${GREEN}✅ 用户选择强制重新生成证书，开始执行……${RESET}"
             echo "######################################################"
-            echo "  再次申请 Let’s Encrypt 证书（域名：${DOMAIN}，Email：${EMAIL}）……"
+            echo -e "${CYAN}  再次申请 Let’s Encrypt 证书（域名：${DOMAIN}，Email：${EMAIL}）……${RESET}"
             "$ACME_BIN" --issue --force --webroot "${WEB_ROOT}" -d "${DOMAIN}" -d "www.${DOMAIN}" \
                 --keylength ec-256 \
                 --accountemail "${EMAIL}" \
-                || { echo "⛔ 证书申请失败：请检查域名解析是否已生效、80 端口是否对外开放、Nginx challenge 配置是否生效。"; exit 1; }
+                || { echo -e "${RED}⛔ 证书申请失败：请检查域名解析是否已生效、80 端口是否对外开放、Nginx challenge 配置是否生效。${RESET}"; exit 1; }
 
-            echo -e "\e[32m正在将新证书安装到 ${SSL_DIR} …\e[0m"
+            echo -e "${CYAN}正在将新证书安装到 ${BLUE}${SSL_DIR}${RESET} …${RESET}"
             "$ACME_BIN" --install-cert -d "${DOMAIN}" \
                 --key-file   "${SSL_DIR}/${DOMAIN}.key" \
                 --fullchain-file "${SSL_DIR}/${DOMAIN}.cer" \
                 --reloadcmd  "systemctl reload nginx" \
                 --force \
-                || { echo "⛔ 新证书安装失败！"; exit 1; }
+                || { echo -e "${RED}⛔ 新证书安装失败！${RESET}"; exit 1; }
 
-            echo -e "\e[32m✅ 新 Let’s Encrypt 证书已生成并部署到 ${SSL_DIR}。\e[0m"
-            echo -e "\e[32m✅ 已完成强制重新生成并自动重载 Nginx。\e[0m"
+            echo -e "${GREEN}✅ 新 Let’s Encrypt 证书已生成并部署到 ${BLUE}${SSL_DIR}${RESET}。${RESET}"
+            echo -e "${GREEN}✅ 已完成强制重新生成并自动重载 Nginx。${RESET}"
         else
-            echo -e "\e[33mℹ️ 跳过证书重新生成，保留现有证书。\e[0m"
+            echo -e "${YELLOW}ℹ️ 跳过证书重新生成，保留现有证书。${RESET}"
         fi
     else
         echo
-        echo -e "\e[33mℹ️ 未在 60 秒内输入，跳过证书重新生成。\e[0m"
+        echo -e "${YELLOW}ℹ️ 未在 60 秒内输入，跳过证书重新生成。${RESET}"
     fi
     exec 0<&3
 fi
@@ -564,33 +572,33 @@ echo "######################################################"
 
 if command -v ufw &>/dev/null; then
     if ufw status | grep -qw active; then
-        echo "✅ UFW 防火墙已启用，80/443 端口已放行。"
+        echo -e "${GREEN}✅ UFW 防火墙已启用，80/443 端口已放行。${RESET}"
     else
-        echo "⚠️ UFW 防火墙已安装但未启用，请手动启用或检查设置。"
+        echo -e "${YELLOW}⚠️ UFW 防火墙已安装但未启用，请手动启用或检查设置。${RESET}"
     fi
 fi
 
 if command -v firewall-cmd &>/dev/null; then
     if systemctl is-active firewalld &>/dev/null; then
-        echo "✅ firewalld 防火墙已启用，80/443 端口已放行。"
+        echo -e "${GREEN}✅ firewalld 防火墙已启用，80/443 端口已放行。${RESET}"
     else
-        echo "⚠️ firewalld 防火墙已安装但未启用，请手动启用或检查设置。"
+        echo -e "${YELLOW}⚠️ firewalld 防火墙已安装但未启用，请手动启用或检查设置。${RESET}"
     fi
 fi
 
 if command -v iptables &>/dev/null; then
     iptables -L -n | grep -E "tcp dpt:80|tcp dpt:443" &>/dev/null
     if [ "$?" -eq 0 ]; then
-        echo "✅ iptables 已放行 80/443 端口。"
+        echo -e "${GREEN}✅ iptables 已放行 80/443 端口。${RESET}"
     else
-        echo "⚠️ iptables 未放行 80/443 端口，请手动检查设置。"
+        echo -e "${YELLOW}⚠️ iptables 未放行 80/443 端口，请手动检查设置。${RESET}"
     fi
 fi
 
 echo
-echo "🎉 所有步骤已成功完成！请访问 https://${DOMAIN} 检查站点是否正常。"
-echo "📅 请记得定期检查 SSL 证书有效期，确保自动续期任务正常运行。"
-echo "如需帮助，请查阅相关文档或联系支持。"
+echo -e "${GREEN}🎉 所有步骤已成功完成！请访问 https://${DOMAIN} 检查站点是否正常。${RESET}"
+echo -e "📅 请记得定期检查 SSL 证书有效期，确保自动续期任务正常运行。"
+echo -e "如需帮助，请查阅相关文档或联系支持。"
 echo "######################################################"
 echo
 
