@@ -358,8 +358,48 @@ echo "DEBUG: ACME_DIR=${ACME_DIR}"
 ls -ld "${ACME_DIR}"
 id
 
-# 检查 Nginx 配置文件是否存在
+# 自动生成并重载 Nginx 配置（如果不存在）
 NGINX_CONF="/etc/nginx/conf.d/${DOMAIN}.conf"
+if [[ ! -f "${NGINX_CONF}" ]]; then
+    echo "⚠️ 未检测到 Nginx 配置文件 ${NGINX_CONF}，自动生成并重载 Nginx ..."
+    cat > "${NGINX_CONF}" <<EOF
+# -------------------------------------------------------------------
+# Nginx 配置：${DOMAIN}
+# 自动生成于 $(date +"%Y-%m-%d %H:%M:%S")
+# -------------------------------------------------------------------
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${DOMAIN} www.${DOMAIN};
+    location ^~ /.well-known/acme-challenge/ {
+        root ${WEB_ROOT};
+        default_type "text/plain";
+        try_files \$uri =404;
+    }
+    return 301 https://\$host\$request_uri;
+}
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name ${DOMAIN} www.${DOMAIN};
+    ssl_certificate      /etc/ssl/${DOMAIN}/fullchain.pem;
+    ssl_certificate_key  /etc/ssl/${DOMAIN}/privkey.pem;
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+    root ${WEB_ROOT};
+    index index.html index.htm index.php;
+    access_log /var/log/nginx/${DOMAIN}.access.log;
+    error_log  /var/log/nginx/${DOMAIN}.error.log warn;
+    location / {
+        try_files \$uri \$uri/ =404;
+    }
+}
+EOF
+    nginx -t && systemctl reload nginx
+    echo "✅ 已自动生成并重载 Nginx 配置：${NGINX_CONF}"
+fi
+
+# 检查 Nginx 配置文件是否存在
 if [[ ! -f "${NGINX_CONF}" ]]; then
     echo "⛔ Nginx 配置文件 ${NGINX_CONF} 不存在，web 目录检测无法继续。请先生成并 reload Nginx 配置。"
     exit 1
