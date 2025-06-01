@@ -2,8 +2,11 @@
 # -*- coding: utf-8 -*-
 #
 # install.sh - 兼容 Ubuntu/Debian、CentOS/AlmaLinux/RHEL 等的自动安装脚本
-#              扩展：直接将网站内容解压到 /var/www/${DOMAIN}/，Nginx 根目录指向该路径
-#              若已有相同证书且距今不足 3 天，先使用现有证书；末尾提示是否重新生成
+#              扩展：
+#                1. 直接将网站内容解压到 /var/www/${DOMAIN}/，Nginx 根目录指向该路径
+#                2. 如果已有相同证书且距今不足 3 天，先使用现有证书；末尾提示是否重新生成
+#                   —— 强制重新生成时使用 --force 参数
+#                3. 将用户重新生成证书的等待时间延长至 60 秒，并使用彩色提示
 #
 set -e
 
@@ -242,7 +245,7 @@ echo "  下载并部署最新版本 web.zip"
 echo "######################################################"
 
 ZIP_URL="https://github.com/dmulxw/download/releases/latest/download/web.zip"
-# 直接将内容解压到 /var/www/${DOMAIN}/
+# 直接将内容解压到 /var/www/${DOMAIN}
 WEB_ROOT="/var/www/${DOMAIN}"
 mkdir -p "${WEB_ROOT}"
 
@@ -513,38 +516,39 @@ echo
 ##############################################
 if $USE_EXISTING_CERT; then
     echo "######################################################"
-    echo "  检测到已有证书距今不足 3 天"
-    echo "  旧证书生成日期：$(date -d @"$CERT_MTIME" +'%Y-%m-%d')，已过去 ${CERT_AGE_DAYS} 天。"
-    echo "  若要强制重新生成，请在 10 秒内输入 Y，或等待超时跳过。"
+    echo -e "\e[33m  检测到已有证书距今不足 3 天"
+    echo -e "  旧证书生成日期：$(date -d @"$CERT_MTIME" +'%Y-%m-%d')，已过去 ${CERT_AGE_DAYS} 天。\e[0m"
+    echo -e "\e[36m  若要强制重新生成，请在 60 秒内输入 Y，或等待超时跳过。\e[0m"
     # 切换到 /dev/tty 读取，避免管道导致直接跳过
     exec 3<&0
     exec < /dev/tty
-    if read -t 10 -rn1 yn; then
+    if read -t 60 -rn1 yn; then
         echo
         if [[ "$yn" =~ [Yy] ]]; then
-            echo "✅ 用户选择强制重新生成证书，开始执行……"
+            echo -e "\e[32m✅ 用户选择强制重新生成证书，开始执行……\e[0m"
             echo "######################################################"
             echo "  再次申请 Let’s Encrypt 证书（域名：${DOMAIN}，Email：${EMAIL}）……"
-            "$ACME_BIN" --issue --webroot "${WEB_ROOT}" -d "${DOMAIN}" -d "www.${DOMAIN}" \
+            "$ACME_BIN" --issue --force --webroot "${WEB_ROOT}" -d "${DOMAIN}" -d "www.${DOMAIN}" \
                 --keylength ec-256 \
                 --accountemail "${EMAIL}" \
                 || { echo "⛔ 证书申请失败：请检查域名解析是否已生效、80 端口是否对外开放、Nginx challenge 配置是否生效。"; exit 1; }
 
-            echo "正在将新证书安装到 ${SSL_DIR} ……"
+            echo -e "\e[32m正在将新证书安装到 ${SSL_DIR} …\e[0m"
             "$ACME_BIN" --install-cert -d "${DOMAIN}" \
                 --key-file   "${SSL_DIR}/${DOMAIN}.key" \
                 --fullchain-file "${SSL_DIR}/${DOMAIN}.cer" \
                 --reloadcmd  "systemctl reload nginx" \
+                --force \
                 || { echo "⛔ 新证书安装失败！"; exit 1; }
 
-            echo "✅ 新 Let’s Encrypt 证书已生成并部署到 ${SSL_DIR}。"
-            echo "✅ 已完成强制重新生成并自动重载 Nginx。"
+            echo -e "\e[32m✅ 新 Let’s Encrypt 证书已生成并部署到 ${SSL_DIR}。\e[0m"
+            echo -e "\e[32m✅ 已完成强制重新生成并自动重载 Nginx。\e[0m"
         else
-            echo "ℹ️ 跳过证书重新生成，保留现有证书。"
+            echo -e "\e[33mℹ️ 跳过证书重新生成，保留现有证书。\e[0m"
         fi
     else
         echo
-        echo "ℹ️ 未在 10 秒内输入，跳过证书重新生成。"
+        echo -e "\e[33mℹ️ 未在 60 秒内输入，跳过证书重新生成。\e[0m"
     fi
     exec 0<&3
 fi
