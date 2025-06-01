@@ -2,8 +2,7 @@
 # -*- coding: utf-8 -*-
 #
 # install.sh - 兼容 Ubuntu/Debian、CentOS/AlmaLinux/RHEL 等的自动安装脚本
-#              扩展：如果已有相同证书且距今不足 3 天，先用现有证书配置，无需立即询问重新生成，
-#              在安装末尾再提示是否要重新生成，不影响主流程。
+#              扩展：如果已有相同证书且距今不足 3 天，先使用现有证书；最后提示是否重新生成
 #
 set -e
 
@@ -420,6 +419,7 @@ fi
 
 ##############################################
 # 7. 生成 Nginx 正式配置并启用站点         #
+#    —— 始终覆盖旧配置，确保路径正确          #
 ##############################################
 echo "######################################################"
 echo "  生成 Nginx 正式配置并启用站点"
@@ -430,11 +430,9 @@ NGINX_CONF_ENABLED="/etc/nginx/sites-enabled"
 mkdir -p "${NGINX_CONF_AVAILABLE}" "${NGINX_CONF_ENABLED}"
 NGINX_CONF_FILE="${NGINX_CONF_AVAILABLE}/${DOMAIN}.conf"
 
-if [ -f "${NGINX_CONF_FILE}" ]; then
-    echo "ℹ️ 检测到 Nginx 配置文件已存在，将跳过此步骤。"
-else
-    echo "正在生成 Nginx 配置文件 ..."
-    cat > "${NGINX_CONF_FILE}" <<EOF
+# 始终覆盖旧配置，避免使用旧的错路径
+echo "正在写入 Nginx 配置文件：${NGINX_CONF_FILE} ..."
+cat > "${NGINX_CONF_FILE}" <<EOF
 server {
     listen 80;
     listen [::]:80;
@@ -469,16 +467,15 @@ server {
     }
 }
 EOF
-    echo "✅ Nginx 配置文件生成完毕：${NGINX_CONF_FILE}"
-fi
+echo "✅ Nginx 配置文件已写入：${NGINX_CONF_FILE}"
 
+# 启用站点配置
 if [ -L "${NGINX_CONF_ENABLED}/${DOMAIN}.conf" ]; then
-    echo "ℹ️ 站点配置已启用，无需重复操作。"
-else
-    echo "正在启用站点配置 ..."
-    ln -s "${NGINX_CONF_FILE}" "${NGINX_CONF_ENABLED}/${DOMAIN}.conf"
-    echo "✅ 站点配置已启用。"
+    echo "ℹ️ 站点配置软链接已存在，先移除旧链接再重新创建。"
+    rm -f "${NGINX_CONF_ENABLED}/${DOMAIN}.conf"
 fi
+ln -s "${NGINX_CONF_FILE}" "${NGINX_CONF_ENABLED}/${DOMAIN}.conf"
+echo "✅ 站点配置已启用：${NGINX_CONF_ENABLED}/${DOMAIN}.conf"
 
 echo "正在测试 Nginx 配置 ..."
 if nginx -t; then
@@ -510,26 +507,17 @@ fi
 echo
 
 ##############################################
-# 9. 在末尾提示是否重新生成证书（不阻塞）   #
+# 9. 在末尾提示是否重新生成证书（不阻塞主流程） #
 ##############################################
 if $USE_EXISTING_CERT; then
     echo "######################################################"
     echo "  检测到已有证书距今不足 3 天"
     echo "  旧证书生成日期：$(date -d @"$CERT_MTIME" +'%Y-%m-%d')，已过去 ${CERT_AGE_DAYS} 天。"
-    echo "  如需强制重新生成证书，请在 10 秒内输入 Y ，否则将跳过更新。"
-    echo -n "  继续生成？(Y/N，默认 N)： "
-    # 超时 10 秒无输入则默认 N
+    echo "  若要强制重新生成，请在 10 秒内输入 Y，或等待超时跳过。"
     read -t 10 -rn1 yn
     echo
     if [[ "$yn" =~ [Yy] ]]; then
         echo "✅ 用户选择强制重新生成证书，开始执行……"
-        echo "######################################################"
-        echo "  再次生成临时 Nginx 配置：仅监听 80 并支持 ACME challenge"
-        echo "######################################################"
-
-        # 临时配置已存在于 /etc/nginx/conf.d/${DOMAIN}.conf，直接 reload
-        systemctl reload nginx
-
         echo "######################################################"
         echo "  再次申请 Let’s Encrypt 证书（域名：${DOMAIN}，Email：${EMAIL}）……"
         "$ACME_BIN" --issue --webroot "${WEB_ROOT}" -d "${DOMAIN}" -d "www.${DOMAIN}" \
